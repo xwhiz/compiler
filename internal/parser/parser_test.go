@@ -48,7 +48,7 @@ func TestParseMinimalMain(t *testing.T) {
 }
 
 func TestParseReportsStatementError(t *testing.T) {
-	tokens, err := lexer.Tokenize("int main() { 42; }")
+	tokens, err := lexer.Tokenize("int main() { print_int(42) }")
 	if err != nil {
 		t.Fatalf("Tokenize() error = %v", err)
 	}
@@ -58,7 +58,41 @@ func TestParseReportsStatementError(t *testing.T) {
 		t.Fatal("Parse() error = nil, want non-nil")
 	}
 
-	if got, want := err.Error(), "1:14: expected statement, got INT_LIT \"42\""; got != want {
+	if got, want := err.Error(), "1:28: expected ';' after expression statement, got RBRACE \"}\""; got != want {
 		t.Fatalf("Parse() error = %q, want %q", got, want)
+	}
+}
+
+func TestParseBuiltinCallStatement(t *testing.T) {
+	tokens, err := lexer.Tokenize("int main() { print_int(123); return 0; }")
+	if err != nil {
+		t.Fatalf("Tokenize() error = %v", err)
+	}
+
+	program, err := Parse(tokens)
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+
+	stmts := program.Functions[0].Body.Stmts
+	if len(stmts) != 2 {
+		t.Fatalf("len(stmts) = %d, want 2", len(stmts))
+	}
+
+	exprStmt, ok := stmts[0].(*ast.ExprStmt)
+	if !ok {
+		t.Fatalf("stmt type = %T, want *ast.ExprStmt", stmts[0])
+	}
+
+	call, ok := exprStmt.Expr.(*ast.CallExpr)
+	if !ok {
+		t.Fatalf("expr type = %T, want *ast.CallExpr", exprStmt.Expr)
+	}
+
+	if call.Callee != "print_int" {
+		t.Fatalf("call.Callee = %q, want %q", call.Callee, "print_int")
+	}
+	if len(call.Args) != 1 {
+		t.Fatalf("len(call.Args) = %d, want 1", len(call.Args))
 	}
 }

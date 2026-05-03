@@ -5,12 +5,14 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/xwhiz/compiler/internal/ast"
+	"github.com/xwhiz/compiler/internal/ir"
 	"github.com/xwhiz/compiler/internal/lexer"
 	"github.com/xwhiz/compiler/internal/parser"
+	"github.com/xwhiz/compiler/internal/sema"
+	"github.com/xwhiz/compiler/internal/vm"
 )
 
 type mode string
@@ -126,28 +128,50 @@ func parseOptions(args []string, stdout io.Writer) (options, error) {
 }
 
 func dispatch(opts options, source []byte, stdout io.Writer) error {
-	inputName := filepath.Base(opts.input)
-	message := ""
-
 	switch opts.mode {
 	case modeTokens:
 		return printTokens(source, stdout)
+	}
+
+	program, err := parseProgram(source)
+	if err != nil {
+		return err
+	}
+
+	switch opts.mode {
 	case modeAST:
-		return printAST(source, stdout)
+		_, err := io.WriteString(stdout, ast.FormatProgram(program))
+		return err
 	case modeSema:
-		message = "semantic analysis output"
+		if err := sema.Analyze(program); err != nil {
+			return err
+		}
+		_, err := io.WriteString(stdout, "semantic OK\n")
+		return err
 	case modeIR:
-		message = "IR output"
+		lowered, err := compileIR(program)
+		if err != nil {
+			return err
+		}
+		_, err = io.WriteString(stdout, ir.Format(lowered))
+		return err
 	case modeCodegen:
-		message = "code generation output"
+		vmProgram, err := compileVM(program)
+		if err != nil {
+			return err
+		}
+		_, err = io.WriteString(stdout, vm.Format(vmProgram))
+		return err
 	case modeRun:
-		message = "compile-and-run path"
+		vmProgram, err := compileVM(program)
+		if err != nil {
+			return err
+		}
+		_, err = vm.Execute(vmProgram, stdout)
+		return err
 	default:
 		return fmt.Errorf("internal error: unknown mode %q", opts.mode)
 	}
-
-	_, err := fmt.Fprintf(stdout, "slice0: %s not implemented yet for %s (%d bytes loaded)\n", message, inputName, len(source))
-	return err
 }
 
 func printTokens(source []byte, stdout io.Writer) error {
@@ -165,19 +189,45 @@ func printTokens(source []byte, stdout io.Writer) error {
 	return nil
 }
 
-func printAST(source []byte, stdout io.Writer) error {
+func parseProgram(source []byte) (*ast.Program, error) {
 	tokens, err := lexer.Tokenize(string(source))
 	if err != nil {
-		return fmt.Errorf("lex: %w", err)
+		return nil, fmt.Errorf("lex: %w", err)
 	}
 
 	program, err := parser.Parse(tokens)
 	if err != nil {
-		return fmt.Errorf("parse: %w", err)
+		return nil, fmt.Errorf("parse: %w", err)
 	}
 
-	_, err = io.WriteString(stdout, ast.FormatProgram(program))
-	return err
+	return program, nil
+}
+
+func compileIR(program *ast.Program) (*ir.Program, error) {
+	if err := sema.Analyze(program); err != nil {
+		return nil, err
+	}
+
+	lowered, err := ir.Lower(program)
+	if err != nil {
+		return nil, err
+	}
+
+	return lowered, nil
+}
+
+func compileVM(program *ast.Program) (*vm.Program, error) {
+	lowered, err := compileIR(program)
+	if err != nil {
+		return nil, err
+	}
+
+	compiled, err := vm.Compile(lowered)
+	if err != nil {
+		return nil, err
+	}
+
+	return compiled, nil
 }
 
 func printUsage(w io.Writer) {

@@ -114,7 +114,7 @@ func (p *Parser) parseStmt() (ast.Stmt, error) {
 	case token.KeywordReturn:
 		return p.parseReturnStmt()
 	default:
-		return nil, p.errorAt(p.peek(), "expected statement")
+		return p.parseExprStmt()
 	}
 }
 
@@ -142,11 +142,60 @@ func (p *Parser) parseReturnStmt() (ast.Stmt, error) {
 
 func (p *Parser) parseExpr() (ast.Expr, error) {
 	tok := p.peek()
-	if tok.Type != token.IntLiteral {
-		return nil, p.errorAt(tok, "expected integer literal expression")
+	switch tok.Type {
+	case token.IntLiteral:
+		p.advance()
+		return &ast.IntLiteral{Pos: tok.Pos, Lexeme: tok.Lexeme}, nil
+	case token.Identifier:
+		return p.parseCallExpr()
+	default:
+		return nil, p.errorAt(tok, "expected expression")
 	}
-	p.advance()
-	return &ast.IntLiteral{Pos: tok.Pos, Lexeme: tok.Lexeme}, nil
+}
+
+func (p *Parser) parseExprStmt() (ast.Stmt, error) {
+	expr, err := p.parseExpr()
+	if err != nil {
+		return nil, err
+	}
+
+	if _, err := p.consume(token.Semicolon, "expected ';' after expression statement"); err != nil {
+		return nil, err
+	}
+
+	return &ast.ExprStmt{Pos: exprPos(expr), Expr: expr}, nil
+}
+
+func (p *Parser) parseCallExpr() (ast.Expr, error) {
+	nameTok, err := p.consume(token.Identifier, "expected function name")
+	if err != nil {
+		return nil, err
+	}
+
+	if _, err := p.consume(token.LParen, "expected '(' after function name"); err != nil {
+		return nil, err
+	}
+
+	call := &ast.CallExpr{Pos: nameTok.Pos, Callee: nameTok.Lexeme}
+	if !p.check(token.RParen) {
+		for {
+			arg, err := p.parseExpr()
+			if err != nil {
+				return nil, err
+			}
+			call.Args = append(call.Args, arg)
+
+			if !p.match(token.Comma) {
+				break
+			}
+		}
+	}
+
+	if _, err := p.consume(token.RParen, "expected ')' after argument list"); err != nil {
+		return nil, err
+	}
+
+	return call, nil
 }
 
 func (p *Parser) consume(want token.Type, message string) (token.Token, error) {
@@ -160,6 +209,14 @@ func (p *Parser) consume(want token.Type, message string) (token.Token, error) {
 
 func (p *Parser) check(want token.Type) bool {
 	return p.peek().Type == want
+}
+
+func (p *Parser) match(want token.Type) bool {
+	if !p.check(want) {
+		return false
+	}
+	p.advance()
+	return true
 }
 
 func (p *Parser) peek() token.Token {
@@ -177,4 +234,15 @@ func (p *Parser) advance() {
 
 func (p *Parser) errorAt(tok token.Token, message string) error {
 	return fmt.Errorf("%d:%d: %s, got %s %q", tok.Pos.Line, tok.Pos.Column, message, tok.Type, tok.Lexeme)
+}
+
+func exprPos(expr ast.Expr) token.Position {
+	switch node := expr.(type) {
+	case *ast.IntLiteral:
+		return node.Pos
+	case *ast.CallExpr:
+		return node.Pos
+	default:
+		return token.Position{}
+	}
 }

@@ -49,12 +49,27 @@ type ReturnStmt struct {
 
 func (*ReturnStmt) stmtNode() {}
 
+type ExprStmt struct {
+	Pos  token.Position
+	Expr Expr
+}
+
+func (*ExprStmt) stmtNode() {}
+
 type IntLiteral struct {
 	Pos    token.Position
 	Lexeme string
 }
 
 func (*IntLiteral) exprNode() {}
+
+type CallExpr struct {
+	Pos    token.Position
+	Callee string
+	Args   []Expr
+}
+
+func (*CallExpr) exprNode() {}
 
 func FormatProgram(program *Program) string {
 	var b strings.Builder
@@ -90,6 +105,9 @@ func writeStmt(b *strings.Builder, level int, stmt Stmt) {
 			return
 		}
 		writeExpr(b, level+1, node.Value)
+	case *ExprStmt:
+		writeLine(b, level, "ExprStmt")
+		writeExpr(b, level+1, node.Expr)
 	default:
 		writeLine(b, level, fmt.Sprintf("<unknown stmt %T>", stmt))
 	}
@@ -99,13 +117,18 @@ func writeExpr(b *strings.Builder, level int, expr Expr) {
 	switch node := expr.(type) {
 	case *IntLiteral:
 		writeLine(b, level, fmt.Sprintf("IntLiteral value=%s", node.Lexeme))
+	case *CallExpr:
+		writeLine(b, level, fmt.Sprintf("CallExpr callee=%s", node.Callee))
+		for _, arg := range node.Args {
+			writeExpr(b, level+1, arg)
+		}
 	default:
 		writeLine(b, level, fmt.Sprintf("<unknown expr %T>", expr))
 	}
 }
 
 func writeLine(b *strings.Builder, level int, text string) {
-	b.WriteString(strings.Repeat("  ", level))
+	b.WriteString(strings.Repeat("    ", level))
 	b.WriteString(text)
 	b.WriteByte('\n')
 }
