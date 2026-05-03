@@ -1,37 +1,60 @@
-# mycc
+# cforge / crun
 
-Handwritten Go compiler for C-like subset. Pipeline:
+Handwritten Go compiler for C-like subset with separate compiler and runtime flow.
+
+Pipeline:
 
 1. lexer
 2. parser / AST
 3. semantic analysis
 4. IR
-5. VM codegen
-6. VM execution
+5. VM object code generation
+6. runtime execution through `crun`
 
 ## Build
 
 ```bash
-go build ./...
+make build
 ```
 
-Run compiler:
+Or:
 
 ```bash
-go run ./cmd/mycc <file.c>
+go build ./cmd/cforge
+go build ./cmd/crun
+```
+
+## Compile And Run
+
+Compile source to object code:
+
+```bash
+./bin/cforge samples/slice9_run.c -o /tmp/opencode/program.vmo
+```
+
+Run object code:
+
+```bash
+./bin/crun /tmp/opencode/program.vmo
+```
+
+Convenience through `make`:
+
+```bash
+make run FILE=samples/slice9_run.c OBJ=/tmp/opencode/program.vmo
 ```
 
 ## Phase Flags
 
 ```bash
-go run ./cmd/mycc --tokens <file.c>
-go run ./cmd/mycc --ast <file.c>
-go run ./cmd/mycc --sema <file.c>
-go run ./cmd/mycc --ir <file.c>
-go run ./cmd/mycc --codegen <file.c>
+./bin/cforge --tokens <file.c>
+./bin/cforge --ast <file.c>
+./bin/cforge --sema <file.c>
+./bin/cforge --ir <file.c>
+./bin/cforge --codegen <file.c>
 ```
 
-Without phase flag, compiler builds VM program and runs it.
+Without phase flag, `cforge` writes `.vmo` object code.
 
 ## Supported Features
 
@@ -115,6 +138,17 @@ Failing samples:
 - `samples/fail/array_init_unsupported.c`
 - `samples/fail/float_to_int.c`
 - `samples/fail/array_as_scalar.c`
+
+## Useful Make Targets
+
+```bash
+make build
+make test
+make compile FILE=samples/slice9_run.c OBJ=/tmp/opencode/program.vmo
+make run-object OBJ=/tmp/opencode/program.vmo
+make run FILE=samples/slice9_run.c OBJ=/tmp/opencode/program.vmo
+make phases FILE=samples/slice8_run.c OBJ=/tmp/opencode/program.vmo
+```
 
 ## Current Limits
 

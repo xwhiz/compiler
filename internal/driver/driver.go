@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/xwhiz/compiler/internal/ast"
@@ -18,13 +19,13 @@ import (
 type mode string
 
 const (
-	modeRun     mode = "run"
+	modeCompile mode = "compile"
 	modeTokens  mode = "tokens"
 	modeAST     mode = "ast"
 	modeSema    mode = "sema"
 	modeIR      mode = "ir"
 	modeCodegen mode = "codegen"
-	toolName         = "mycc"
+	toolName         = "cforge"
 	exitOK           = 0
 	exitUsage        = 2
 	exitFailure      = 1
@@ -34,6 +35,7 @@ type options struct {
 	showHelp bool
 	mode     mode
 	input    string
+	output   string
 }
 
 func Run(args []string, stdout, stderr io.Writer) int {
@@ -70,6 +72,7 @@ func parseOptions(args []string, stdout io.Writer) (options, error) {
 		sema    bool
 		ir      bool
 		codegen bool
+		output  string
 	)
 
 	fs.BoolVar(&help, "help", false, "show usage")
@@ -79,6 +82,7 @@ func parseOptions(args []string, stdout io.Writer) (options, error) {
 	fs.BoolVar(&sema, "sema", false, "print semantic analysis output")
 	fs.BoolVar(&ir, "ir", false, "print IR output")
 	fs.BoolVar(&codegen, "codegen", false, "print VM code output")
+	fs.StringVar(&output, "o", "", "write object output file")
 
 	if err := fs.Parse(args); err != nil {
 		return options{}, fmt.Errorf("parse flags: %w", err)
@@ -89,7 +93,7 @@ func parseOptions(args []string, stdout io.Writer) (options, error) {
 	}
 
 	selectedModes := 0
-	selected := modeRun
+	selected := modeCompile
 
 	for _, candidate := range []struct {
 		enabled bool
@@ -112,6 +116,9 @@ func parseOptions(args []string, stdout io.Writer) (options, error) {
 	if selectedModes > 1 {
 		return options{}, fmt.Errorf("choose only one phase flag")
 	}
+	if selectedModes > 0 && output != "" {
+		return options{}, fmt.Errorf("-o only allowed without phase flag")
+	}
 
 	positionals := fs.Args()
 	if len(positionals) == 0 {
@@ -122,8 +129,9 @@ func parseOptions(args []string, stdout io.Writer) (options, error) {
 	}
 
 	return options{
-		mode:  selected,
-		input: positionals[0],
+		mode:   selected,
+		input:  positionals[0],
+		output: output,
 	}, nil
 }
 
@@ -162,16 +170,32 @@ func dispatch(opts options, source []byte, stdout io.Writer) error {
 		}
 		_, err = io.WriteString(stdout, vm.Format(vmProgram))
 		return err
-	case modeRun:
+	case modeCompile:
 		vmProgram, err := compileVM(program)
 		if err != nil {
 			return err
 		}
-		_, err = vm.Execute(vmProgram, stdout)
+		outputPath := opts.output
+		if outputPath == "" {
+			outputPath = defaultObjectPath(opts.input)
+		}
+		err = os.WriteFile(outputPath, []byte(vm.Format(vmProgram)), 0o644)
+		if err != nil {
+			return fmt.Errorf("write %s: %w", outputPath, err)
+		}
+		_, err = fmt.Fprintf(stdout, "wrote %s\n", outputPath)
 		return err
 	default:
 		return fmt.Errorf("internal error: unknown mode %q", opts.mode)
 	}
+}
+
+func defaultObjectPath(input string) string {
+	ext := filepath.Ext(input)
+	if ext == "" {
+		return input + ".vmo"
+	}
+	return strings.TrimSuffix(input, ext) + ".vmo"
 }
 
 func printTokens(source []byte, stdout io.Writer) error {
@@ -231,7 +255,7 @@ func compileVM(program *ast.Program) (*vm.Program, error) {
 }
 
 func printUsage(w io.Writer) {
-	_, _ = io.WriteString(w, strings.TrimSpace(`Usage: mycc [phase flag] <file>
+	_, _ = io.WriteString(w, strings.TrimSpace(`Usage: cforge [phase flag] [-o output.vmo] <file>
 
 Phase flags:
   --tokens    print lexer output
@@ -240,7 +264,7 @@ Phase flags:
   --ir        print IR output
   --codegen   print VM code output
 
-Without phase flag, mycc will compile and run input program.
+Without phase flag, cforge compiles input program to a .vmo object file.
 `)+"\n")
 }
 
@@ -254,7 +278,7 @@ func classifyExitCode(err error) int {
 		return exitOK
 	}
 
-	if strings.Contains(err.Error(), "missing input file") || strings.Contains(err.Error(), "choose only one phase flag") || strings.Contains(err.Error(), "expected one input file") || strings.Contains(err.Error(), "parse flags") {
+	if strings.Contains(err.Error(), "missing input file") || strings.Contains(err.Error(), "choose only one phase flag") || strings.Contains(err.Error(), "expected one input file") || strings.Contains(err.Error(), "parse flags") || strings.Contains(err.Error(), "-o only allowed") {
 		return exitUsage
 	}
 
