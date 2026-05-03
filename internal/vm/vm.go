@@ -11,9 +11,19 @@ import (
 type Op string
 
 const (
-	OpPushInt     Op = "PUSH_INT"
-	OpCallBuiltin Op = "CALL_BUILTIN"
-	OpRet         Op = "RET"
+	OpDeclareLocal Op = "DECLARE_LOCAL"
+	OpPushInt      Op = "PUSH_INT"
+	OpLoadLocal    Op = "LOAD_LOCAL"
+	OpStoreLocal   Op = "STORE_LOCAL"
+	OpAddInt       Op = "ADD_INT"
+	OpSubInt       Op = "SUB_INT"
+	OpMulInt       Op = "MUL_INT"
+	OpDivInt       Op = "DIV_INT"
+	OpModInt       Op = "MOD_INT"
+	OpNegInt       Op = "NEG_INT"
+	OpPop          Op = "POP"
+	OpCallBuiltin  Op = "CALL_BUILTIN"
+	OpRet          Op = "RET"
 )
 
 type Program struct {
@@ -36,14 +46,38 @@ type Value struct {
 	Int int64
 }
 
+type frame struct {
+	locals map[string]Value
+}
+
 func Compile(program *ir.Program) (*Program, error) {
 	out := &Program{}
 	for _, fn := range program.Functions {
 		compiled := Function{Name: fn.Name}
 		for _, inst := range fn.Instructions {
 			switch inst.Op {
+			case ir.OpDeclareLocal:
+				compiled.Instructions = append(compiled.Instructions, Instruction{Op: OpDeclareLocal, Name: inst.Name})
 			case ir.OpPushInt:
 				compiled.Instructions = append(compiled.Instructions, Instruction{Op: OpPushInt, IntValue: inst.IntValue})
+			case ir.OpLoadLocal:
+				compiled.Instructions = append(compiled.Instructions, Instruction{Op: OpLoadLocal, Name: inst.Name})
+			case ir.OpStoreLocal:
+				compiled.Instructions = append(compiled.Instructions, Instruction{Op: OpStoreLocal, Name: inst.Name})
+			case ir.OpAddInt:
+				compiled.Instructions = append(compiled.Instructions, Instruction{Op: OpAddInt})
+			case ir.OpSubInt:
+				compiled.Instructions = append(compiled.Instructions, Instruction{Op: OpSubInt})
+			case ir.OpMulInt:
+				compiled.Instructions = append(compiled.Instructions, Instruction{Op: OpMulInt})
+			case ir.OpDivInt:
+				compiled.Instructions = append(compiled.Instructions, Instruction{Op: OpDivInt})
+			case ir.OpModInt:
+				compiled.Instructions = append(compiled.Instructions, Instruction{Op: OpModInt})
+			case ir.OpNegInt:
+				compiled.Instructions = append(compiled.Instructions, Instruction{Op: OpNegInt})
+			case ir.OpPop:
+				compiled.Instructions = append(compiled.Instructions, Instruction{Op: OpPop})
 			case ir.OpCallBuiltin:
 				compiled.Instructions = append(compiled.Instructions, Instruction{Op: OpCallBuiltin, Name: inst.Name, ArgCount: inst.ArgCount})
 			case ir.OpReturn:
@@ -78,12 +112,83 @@ func Execute(program *Program, stdout io.Writer) (int64, error) {
 		return 0, fmt.Errorf("vm: missing main function")
 	}
 
-	stack := make([]Value, 0, 8)
+	stack := make([]Value, 0, 16)
+	fr := frame{locals: map[string]Value{}}
 	for pc := 0; pc < len(mainFn.Instructions); pc++ {
 		inst := mainFn.Instructions[pc]
 		switch inst.Op {
+		case OpDeclareLocal:
+			fr.locals[inst.Name] = Value{}
 		case OpPushInt:
 			stack = append(stack, Value{Int: inst.IntValue})
+		case OpLoadLocal:
+			value, ok := fr.locals[inst.Name]
+			if !ok {
+				return 0, fmt.Errorf("vm: unknown local %q", inst.Name)
+			}
+			stack = append(stack, value)
+		case OpStoreLocal:
+			value, rest, err := popOne(stack)
+			if err != nil {
+				return 0, err
+			}
+			if _, ok := fr.locals[inst.Name]; !ok {
+				return 0, fmt.Errorf("vm: unknown local %q", inst.Name)
+			}
+			fr.locals[inst.Name] = value
+			stack = rest
+		case OpAddInt:
+			var err error
+			stack, err = binaryIntOp(stack, func(a, b int64) (int64, error) { return a + b, nil })
+			if err != nil {
+				return 0, err
+			}
+		case OpSubInt:
+			var err error
+			stack, err = binaryIntOp(stack, func(a, b int64) (int64, error) { return a - b, nil })
+			if err != nil {
+				return 0, err
+			}
+		case OpMulInt:
+			var err error
+			stack, err = binaryIntOp(stack, func(a, b int64) (int64, error) { return a * b, nil })
+			if err != nil {
+				return 0, err
+			}
+		case OpDivInt:
+			var err error
+			stack, err = binaryIntOp(stack, func(a, b int64) (int64, error) {
+				if b == 0 {
+					return 0, fmt.Errorf("vm: division by zero")
+				}
+				return a / b, nil
+			})
+			if err != nil {
+				return 0, err
+			}
+		case OpModInt:
+			var err error
+			stack, err = binaryIntOp(stack, func(a, b int64) (int64, error) {
+				if b == 0 {
+					return 0, fmt.Errorf("vm: modulo by zero")
+				}
+				return a % b, nil
+			})
+			if err != nil {
+				return 0, err
+			}
+		case OpNegInt:
+			value, rest, err := popOne(stack)
+			if err != nil {
+				return 0, err
+			}
+			stack = append(rest, Value{Int: -value.Int})
+		case OpPop:
+			_, rest, err := popOne(stack)
+			if err != nil {
+				return 0, err
+			}
+			stack = rest
 		case OpCallBuiltin:
 			args, rest, err := popArgs(stack, inst.ArgCount)
 			if err != nil {
@@ -108,11 +213,13 @@ func Execute(program *Program, stdout io.Writer) (int64, error) {
 
 func (i Instruction) String() string {
 	switch i.Op {
+	case OpDeclareLocal, OpLoadLocal, OpStoreLocal:
+		return fmt.Sprintf("%s %s", i.Op, i.Name)
 	case OpPushInt:
 		return fmt.Sprintf("%s %d", i.Op, i.IntValue)
 	case OpCallBuiltin:
 		return fmt.Sprintf("%s %s %d", i.Op, i.Name, i.ArgCount)
-	case OpRet:
+	case OpRet, OpAddInt, OpSubInt, OpMulInt, OpDivInt, OpModInt, OpNegInt, OpPop:
 		return string(i.Op)
 	default:
 		return string(i.Op)
@@ -135,6 +242,28 @@ func popArgs(stack []Value, argc int) ([]Value, []Value, error) {
 	start := len(stack) - argc
 	args := append([]Value(nil), stack[start:]...)
 	return args, stack[:start], nil
+}
+
+func popOne(stack []Value) (Value, []Value, error) {
+	if len(stack) == 0 {
+		return Value{}, nil, fmt.Errorf("vm: stack underflow")
+	}
+	return stack[len(stack)-1], stack[:len(stack)-1], nil
+}
+
+func binaryIntOp(stack []Value, op func(int64, int64) (int64, error)) ([]Value, error) {
+	if len(stack) < 2 {
+		return nil, fmt.Errorf("vm: stack underflow: need 2 values, have %d", len(stack))
+	}
+	left := stack[len(stack)-2]
+	right := stack[len(stack)-1]
+	result, err := op(left.Int, right.Int)
+	if err != nil {
+		return nil, err
+	}
+	stack = stack[:len(stack)-2]
+	stack = append(stack, Value{Int: result})
+	return stack, nil
 }
 
 func callBuiltin(name string, args []Value, stdout io.Writer) error {

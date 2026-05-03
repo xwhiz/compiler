@@ -12,7 +12,10 @@ func TestExecuteBuiltinPrints(t *testing.T) {
 		Functions: []ir.Function{{
 			Name: "main",
 			Instructions: []ir.Instruction{
+				{Op: ir.OpDeclareLocal, Name: "x"},
 				{Op: ir.OpPushInt, IntValue: 123},
+				{Op: ir.OpStoreLocal, Name: "x"},
+				{Op: ir.OpLoadLocal, Name: "x"},
 				{Op: ir.OpCallBuiltin, Name: "print_int", ArgCount: 1},
 				{Op: ir.OpCallBuiltin, Name: "print_newline", ArgCount: 0},
 				{Op: ir.OpPushInt, IntValue: 0},

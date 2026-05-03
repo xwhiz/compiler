@@ -16,6 +16,22 @@ const (
 	TypeVoid  TypeName = "void"
 )
 
+type BinaryOp string
+
+const (
+	BinaryAdd BinaryOp = "+"
+	BinarySub BinaryOp = "-"
+	BinaryMul BinaryOp = "*"
+	BinaryDiv BinaryOp = "/"
+	BinaryMod BinaryOp = "%"
+)
+
+type UnaryOp string
+
+const (
+	UnaryNeg UnaryOp = "-"
+)
+
 type Program struct {
 	Functions []*FuncDecl
 }
@@ -42,6 +58,15 @@ type BlockStmt struct {
 
 func (*BlockStmt) stmtNode() {}
 
+type VarDeclStmt struct {
+	Pos  token.Position
+	Type TypeName
+	Name string
+	Init Expr
+}
+
+func (*VarDeclStmt) stmtNode() {}
+
 type ReturnStmt struct {
 	Pos   token.Position
 	Value Expr
@@ -63,6 +88,13 @@ type IntLiteral struct {
 
 func (*IntLiteral) exprNode() {}
 
+type IdentExpr struct {
+	Pos  token.Position
+	Name string
+}
+
+func (*IdentExpr) exprNode() {}
+
 type CallExpr struct {
 	Pos    token.Position
 	Callee string
@@ -70,6 +102,31 @@ type CallExpr struct {
 }
 
 func (*CallExpr) exprNode() {}
+
+type AssignExpr struct {
+	Pos   token.Position
+	Name  string
+	Value Expr
+}
+
+func (*AssignExpr) exprNode() {}
+
+type BinaryExpr struct {
+	Pos   token.Position
+	Op    BinaryOp
+	Left  Expr
+	Right Expr
+}
+
+func (*BinaryExpr) exprNode() {}
+
+type UnaryExpr struct {
+	Pos   token.Position
+	Op    UnaryOp
+	Value Expr
+}
+
+func (*UnaryExpr) exprNode() {}
 
 func FormatProgram(program *Program) string {
 	var b strings.Builder
@@ -98,6 +155,12 @@ func writeStmt(b *strings.Builder, level int, stmt Stmt) {
 	switch node := stmt.(type) {
 	case *BlockStmt:
 		writeBlock(b, level, node)
+	case *VarDeclStmt:
+		writeLine(b, level, fmt.Sprintf("VarDeclStmt name=%s type=%s", node.Name, node.Type))
+		if node.Init != nil {
+			writeLine(b, level+1, "Init")
+			writeExpr(b, level+2, node.Init)
+		}
 	case *ReturnStmt:
 		writeLine(b, level, "ReturnStmt")
 		if node.Value == nil {
@@ -117,11 +180,23 @@ func writeExpr(b *strings.Builder, level int, expr Expr) {
 	switch node := expr.(type) {
 	case *IntLiteral:
 		writeLine(b, level, fmt.Sprintf("IntLiteral value=%s", node.Lexeme))
+	case *IdentExpr:
+		writeLine(b, level, fmt.Sprintf("IdentExpr name=%s", node.Name))
 	case *CallExpr:
 		writeLine(b, level, fmt.Sprintf("CallExpr callee=%s", node.Callee))
 		for _, arg := range node.Args {
 			writeExpr(b, level+1, arg)
 		}
+	case *AssignExpr:
+		writeLine(b, level, fmt.Sprintf("AssignExpr name=%s", node.Name))
+		writeExpr(b, level+1, node.Value)
+	case *BinaryExpr:
+		writeLine(b, level, fmt.Sprintf("BinaryExpr op=%s", node.Op))
+		writeExpr(b, level+1, node.Left)
+		writeExpr(b, level+1, node.Right)
+	case *UnaryExpr:
+		writeLine(b, level, fmt.Sprintf("UnaryExpr op=%s", node.Op))
+		writeExpr(b, level+1, node.Value)
 	default:
 		writeLine(b, level, fmt.Sprintf("<unknown expr %T>", expr))
 	}

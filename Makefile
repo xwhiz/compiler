@@ -29,27 +29,11 @@ all: build
 	@./$(BIN) $(FILE)
 
 to_file: build
-	@echo "TOKENS:"
 	@./$(BIN) --tokens $(FILE) > 1_tokens.ansi
-	@echo "============================================="
-	
-	@echo "AST:"
 	@./$(BIN) --ast $(FILE) > 2_ast.ansi
-	@echo "============================================="
-	
-	@echo "Semantic Analysis:"
 	@./$(BIN) --sema $(FILE) > 3_sema.ansi
-	@echo "============================================="
-	
-	@echo "IR:"
 	@./$(BIN) --ir $(FILE) > 4_ir.ansi
-	@echo "============================================="
-	
-	@echo "Codegen:"
 	@./$(BIN) --codegen $(FILE) > 5_codegen.ansi
-	@echo "============================================="
-	
-	@echo "Executed:"
 	@./$(BIN) $(FILE) > 6_output.ansi
 
 build:

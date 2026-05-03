@@ -47,7 +47,7 @@ func TestParseMinimalMain(t *testing.T) {
 	}
 }
 
-func TestParseReportsStatementError(t *testing.T) {
+func TestParseReportsMissingSemicolon(t *testing.T) {
 	tokens, err := lexer.Tokenize("int main() { print_int(42) }")
 	if err != nil {
 		t.Fatalf("Tokenize() error = %v", err)
@@ -94,5 +94,38 @@ func TestParseBuiltinCallStatement(t *testing.T) {
 	}
 	if len(call.Args) != 1 {
 		t.Fatalf("len(call.Args) = %d, want 1", len(call.Args))
+	}
+}
+
+func TestParseLocalDeclAndArithmetic(t *testing.T) {
+	tokens, err := lexer.Tokenize("int main() { int x = 10; int y = 2; return x * y + 3; }")
+	if err != nil {
+		t.Fatalf("Tokenize() error = %v", err)
+	}
+
+	program, err := Parse(tokens)
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+
+	stmts := program.Functions[0].Body.Stmts
+	if len(stmts) != 3 {
+		t.Fatalf("len(stmts) = %d, want 3", len(stmts))
+	}
+
+	decl, ok := stmts[0].(*ast.VarDeclStmt)
+	if !ok {
+		t.Fatalf("stmt type = %T, want *ast.VarDeclStmt", stmts[0])
+	}
+	if decl.Name != "x" || decl.Type != ast.TypeInt {
+		t.Fatalf("decl = %#v, want int x", decl)
+	}
+
+	ret, ok := stmts[2].(*ast.ReturnStmt)
+	if !ok {
+		t.Fatalf("stmt type = %T, want *ast.ReturnStmt", stmts[2])
+	}
+	if _, ok := ret.Value.(*ast.BinaryExpr); !ok {
+		t.Fatalf("ret.Value type = %T, want *ast.BinaryExpr", ret.Value)
 	}
 }

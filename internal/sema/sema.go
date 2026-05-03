@@ -11,6 +11,13 @@ type builtinSig struct {
 	ret    ast.TypeName
 }
 
+type scope map[string]ast.TypeName
+
+type analyzer struct {
+	builtins []scope
+	scopes   []scope
+}
+
 var builtins = map[string]builtinSig{
 	"print_int":     {params: []ast.TypeName{ast.TypeInt}, ret: ast.TypeVoid},
 	"print_newline": {params: nil, ret: ast.TypeVoid},
@@ -22,11 +29,12 @@ func Analyze(program *ast.Program) error {
 	}
 
 	hasMain := false
+	a := &analyzer{}
 	for _, fn := range program.Functions {
 		if fn.Name == "main" {
 			hasMain = true
 		}
-		if err := analyzeFunc(fn); err != nil {
+		if err := a.analyzeFunc(fn); err != nil {
 			return err
 		}
 	}
@@ -38,22 +46,47 @@ func Analyze(program *ast.Program) error {
 	return nil
 }
 
-func analyzeFunc(fn *ast.FuncDecl) error {
-	for _, stmt := range fn.Body.Stmts {
-		if err := analyzeStmt(stmt, fn.ReturnType); err != nil {
+func (a *analyzer) analyzeFunc(fn *ast.FuncDecl) error {
+	a.pushScope()
+	defer a.popScope()
+	return a.analyzeBlock(fn.Body, fn.ReturnType)
+}
+
+func (a *analyzer) analyzeBlock(block *ast.BlockStmt, returnType ast.TypeName) error {
+	a.pushScope()
+	defer a.popScope()
+
+	for _, stmt := range block.Stmts {
+		if err := a.analyzeStmt(stmt, returnType); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func analyzeStmt(stmt ast.Stmt, returnType ast.TypeName) error {
+func (a *analyzer) analyzeStmt(stmt ast.Stmt, returnType ast.TypeName) error {
 	switch node := stmt.(type) {
 	case *ast.BlockStmt:
-		for _, inner := range node.Stmts {
-			if err := analyzeStmt(inner, returnType); err != nil {
-				return err
-			}
+		return a.analyzeBlock(node, returnType)
+	case *ast.VarDeclStmt:
+		if node.Type != ast.TypeInt {
+			return fmt.Errorf("semantic: local type %s not supported yet at %s", node.Type, node.Pos)
+		}
+		if node.Type == ast.TypeVoid {
+			return fmt.Errorf("semantic: variable %q cannot have type void at %s", node.Name, node.Pos)
+		}
+		if err := a.declare(node.Name, node.Type, node.Pos); err != nil {
+			return err
+		}
+		if node.Init == nil {
+			return nil
+		}
+		initType, err := a.exprType(node.Init)
+		if err != nil {
+			return err
+		}
+		if initType != node.Type {
+			return fmt.Errorf("semantic: initializer type mismatch for %s at %s: want %s, got %s", node.Name, node.Pos, node.Type, initType)
 		}
 		return nil
 	case *ast.ReturnStmt:
@@ -66,7 +99,7 @@ func analyzeStmt(stmt ast.Stmt, returnType ast.TypeName) error {
 		if node.Value == nil {
 			return fmt.Errorf("semantic: %s function must return value at %s", returnType, node.Pos)
 		}
-		typeName, err := exprType(node.Value)
+		typeName, err := a.exprType(node.Value)
 		if err != nil {
 			return err
 		}
@@ -75,17 +108,23 @@ func analyzeStmt(stmt ast.Stmt, returnType ast.TypeName) error {
 		}
 		return nil
 	case *ast.ExprStmt:
-		_, err := exprType(node.Expr)
+		_, err := a.exprType(node.Expr)
 		return err
 	default:
 		return fmt.Errorf("semantic: unsupported statement %T", stmt)
 	}
 }
 
-func exprType(expr ast.Expr) (ast.TypeName, error) {
+func (a *analyzer) exprType(expr ast.Expr) (ast.TypeName, error) {
 	switch node := expr.(type) {
 	case *ast.IntLiteral:
 		return ast.TypeInt, nil
+	case *ast.IdentExpr:
+		typ, ok := a.lookup(node.Name)
+		if !ok {
+			return "", fmt.Errorf("semantic: unknown variable %q at %s", node.Name, node.Pos)
+		}
+		return typ, nil
 	case *ast.CallExpr:
 		sig, ok := builtins[node.Callee]
 		if !ok {
@@ -95,7 +134,7 @@ func exprType(expr ast.Expr) (ast.TypeName, error) {
 			return "", fmt.Errorf("semantic: wrong arg count for %s at %s: want %d, got %d", node.Callee, node.Pos, len(sig.params), len(node.Args))
 		}
 		for i, arg := range node.Args {
-			argType, err := exprType(arg)
+			argType, err := a.exprType(arg)
 			if err != nil {
 				return "", err
 			}
@@ -104,7 +143,71 @@ func exprType(expr ast.Expr) (ast.TypeName, error) {
 			}
 		}
 		return sig.ret, nil
+	case *ast.AssignExpr:
+		lhsType, ok := a.lookup(node.Name)
+		if !ok {
+			return "", fmt.Errorf("semantic: unknown variable %q at %s", node.Name, node.Pos)
+		}
+		rhsType, err := a.exprType(node.Value)
+		if err != nil {
+			return "", err
+		}
+		if lhsType != rhsType {
+			return "", fmt.Errorf("semantic: assignment type mismatch for %s at %s: want %s, got %s", node.Name, node.Pos, lhsType, rhsType)
+		}
+		return lhsType, nil
+	case *ast.BinaryExpr:
+		leftType, err := a.exprType(node.Left)
+		if err != nil {
+			return "", err
+		}
+		rightType, err := a.exprType(node.Right)
+		if err != nil {
+			return "", err
+		}
+		if leftType != ast.TypeInt || rightType != ast.TypeInt {
+			return "", fmt.Errorf("semantic: binary op %s at %s needs int operands", node.Op, node.Pos)
+		}
+		return ast.TypeInt, nil
+	case *ast.UnaryExpr:
+		valueType, err := a.exprType(node.Value)
+		if err != nil {
+			return "", err
+		}
+		if valueType != ast.TypeInt {
+			return "", fmt.Errorf("semantic: unary op %s at %s needs int operand", node.Op, node.Pos)
+		}
+		return ast.TypeInt, nil
 	default:
 		return "", fmt.Errorf("semantic: unsupported expression %T", expr)
 	}
+}
+
+func (a *analyzer) pushScope() {
+	a.scopes = append(a.scopes, scope{})
+}
+
+func (a *analyzer) popScope() {
+	if len(a.scopes) == 0 {
+		return
+	}
+	a.scopes = a.scopes[:len(a.scopes)-1]
+}
+
+func (a *analyzer) declare(name string, typ ast.TypeName, pos interface{ String() string }) error {
+	current := a.scopes[len(a.scopes)-1]
+	if _, exists := current[name]; exists {
+		return fmt.Errorf("semantic: duplicate declaration of %q at %s", name, pos.String())
+	}
+	current[name] = typ
+	return nil
+}
+
+func (a *analyzer) lookup(name string) (ast.TypeName, bool) {
+	for i := len(a.scopes) - 1; i >= 0; i-- {
+		if typ, ok := a.scopes[i][name]; ok {
+			return typ, true
+		}
+	}
+	return "", false
 }
