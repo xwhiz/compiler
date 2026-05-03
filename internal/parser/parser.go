@@ -48,6 +48,10 @@ func (p *Parser) parseFuncDecl() (*ast.FuncDecl, error) {
 	if _, err := p.consume(token.LParen, "expected '(' after function name"); err != nil {
 		return nil, err
 	}
+	params, err := p.parseParams()
+	if err != nil {
+		return nil, err
+	}
 	if _, err := p.consume(token.RParen, "expected ')' after parameter list"); err != nil {
 		return nil, err
 	}
@@ -61,8 +65,67 @@ func (p *Parser) parseFuncDecl() (*ast.FuncDecl, error) {
 		ReturnType: retType,
 		Name:       nameTok.Lexeme,
 		Pos:        pos,
+		Params:     params,
 		Body:       body,
 	}, nil
+}
+
+func (p *Parser) parseParams() ([]ast.Param, error) {
+	if p.check(token.RParen) {
+		return nil, nil
+	}
+
+	if p.peek().Type == token.KeywordVoid {
+		typeName, pos, err := p.parseTypeName()
+		if err != nil {
+			return nil, err
+		}
+		if p.check(token.RParen) {
+			if typeName != ast.TypeVoid {
+				return nil, p.errorAtTokenPos(pos, "internal error: non-void empty parameter list")
+			}
+			return nil, nil
+		}
+		nameTok, err := p.consume(token.Identifier, "expected parameter name")
+		if err != nil {
+			return nil, err
+		}
+		params := []ast.Param{{Pos: pos, Type: typeName, Name: nameTok.Lexeme}}
+		for p.match(token.Comma) {
+			param, err := p.parseParam()
+			if err != nil {
+				return nil, err
+			}
+			params = append(params, param)
+		}
+		return params, nil
+	}
+
+	param, err := p.parseParam()
+	if err != nil {
+		return nil, err
+	}
+	params := []ast.Param{param}
+	for p.match(token.Comma) {
+		param, err := p.parseParam()
+		if err != nil {
+			return nil, err
+		}
+		params = append(params, param)
+	}
+	return params, nil
+}
+
+func (p *Parser) parseParam() (ast.Param, error) {
+	typeName, pos, err := p.parseTypeName()
+	if err != nil {
+		return ast.Param{}, err
+	}
+	nameTok, err := p.consume(token.Identifier, "expected parameter name")
+	if err != nil {
+		return ast.Param{}, err
+	}
+	return ast.Param{Pos: pos, Type: typeName, Name: nameTok.Lexeme}, nil
 }
 
 func (p *Parser) parseTypeName() (ast.TypeName, token.Position, error) {

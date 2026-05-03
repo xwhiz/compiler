@@ -2,25 +2,27 @@ package sema
 
 import (
 	"fmt"
+	"maps"
 
 	"github.com/xwhiz/compiler/internal/ast"
 )
 
-type builtinSig struct {
-	params []ast.TypeName
-	ret    ast.TypeName
+type funcSig struct {
+	params  []ast.TypeName
+	ret     ast.TypeName
+	builtin bool
 }
 
 type scope map[string]ast.TypeName
 
 type analyzer struct {
-	builtins []scope
-	scopes   []scope
+	scopes []scope
+	funcs  map[string]funcSig
 }
 
-var builtins = map[string]builtinSig{
-	"print_int":     {params: []ast.TypeName{ast.TypeInt}, ret: ast.TypeVoid},
-	"print_newline": {params: nil, ret: ast.TypeVoid},
+var builtins = map[string]funcSig{
+	"print_int":     {params: []ast.TypeName{ast.TypeInt}, ret: ast.TypeVoid, builtin: true},
+	"print_newline": {params: nil, ret: ast.TypeVoid, builtin: true},
 }
 
 func Analyze(program *ast.Program) error {
@@ -28,11 +30,16 @@ func Analyze(program *ast.Program) error {
 		return fmt.Errorf("semantic: missing function definitions")
 	}
 
+	a := &analyzer{funcs: map[string]funcSig{}}
+	maps.Copy(a.funcs, builtins)
+
 	hasMain := false
-	a := &analyzer{}
 	for _, fn := range program.Functions {
 		if fn.Name == "main" {
 			hasMain = true
+		}
+		if err := a.registerFunc(fn); err != nil {
+			return err
 		}
 		if err := a.analyzeFunc(fn); err != nil {
 			return err
@@ -46,9 +53,34 @@ func Analyze(program *ast.Program) error {
 	return nil
 }
 
+func (a *analyzer) registerFunc(fn *ast.FuncDecl) error {
+	if fn.ReturnType != ast.TypeInt && fn.ReturnType != ast.TypeVoid {
+		return fmt.Errorf("semantic: function return type %s not supported yet at %s", fn.ReturnType, fn.Pos)
+	}
+	if _, exists := a.funcs[fn.Name]; exists {
+		return fmt.Errorf("semantic: duplicate function %q at %s", fn.Name, fn.Pos)
+	}
+	params := make([]ast.TypeName, 0, len(fn.Params))
+	for _, param := range fn.Params {
+		if param.Type != ast.TypeInt {
+			return fmt.Errorf("semantic: parameter type %s not supported yet at %s", param.Type, param.Pos)
+		}
+		params = append(params, param.Type)
+	}
+	a.funcs[fn.Name] = funcSig{params: params, ret: fn.ReturnType}
+	return nil
+}
+
 func (a *analyzer) analyzeFunc(fn *ast.FuncDecl) error {
 	a.pushScope()
 	defer a.popScope()
+
+	for _, param := range fn.Params {
+		if err := a.declare(param.Name, param.Type, param.Pos); err != nil {
+			return err
+		}
+	}
+
 	return a.analyzeBlock(fn.Body, fn.ReturnType)
 }
 
@@ -152,7 +184,7 @@ func (a *analyzer) exprType(expr ast.Expr) (ast.TypeName, error) {
 		}
 		return typ, nil
 	case *ast.CallExpr:
-		sig, ok := builtins[node.Callee]
+		sig, ok := a.funcs[node.Callee]
 		if !ok {
 			return "", fmt.Errorf("semantic: call to unknown function %q at %s", node.Callee, node.Pos)
 		}

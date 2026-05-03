@@ -4,18 +4,20 @@ import (
 	"bytes"
 	"testing"
 
+	"github.com/xwhiz/compiler/internal/ast"
 	"github.com/xwhiz/compiler/internal/ir"
 )
 
 func TestExecuteBuiltinPrints(t *testing.T) {
 	irProgram := &ir.Program{
 		Functions: []ir.Function{{
-			Name: "main",
+			Name:       "main",
+			ReturnType: ast.TypeInt,
 			Instructions: []ir.Instruction{
-				{Op: ir.OpDeclareLocal, Name: "x"},
+				{Op: ir.OpDeclareLocal, Name: "x@0"},
 				{Op: ir.OpPushInt, IntValue: 123},
-				{Op: ir.OpStoreLocal, Name: "x"},
-				{Op: ir.OpLoadLocal, Name: "x"},
+				{Op: ir.OpStoreLocal, Name: "x@0"},
+				{Op: ir.OpLoadLocal, Name: "x@0"},
 				{Op: ir.OpCallBuiltin, Name: "print_int", ArgCount: 1},
 				{Op: ir.OpCallBuiltin, Name: "print_newline", ArgCount: 0},
 				{Op: ir.OpPushInt, IntValue: 0},
@@ -45,7 +47,8 @@ func TestExecuteBuiltinPrints(t *testing.T) {
 func TestExecuteLoopAndJump(t *testing.T) {
 	irProgram := &ir.Program{
 		Functions: []ir.Function{{
-			Name: "main",
+			Name:       "main",
+			ReturnType: ast.TypeInt,
 			Instructions: []ir.Instruction{
 				{Op: ir.OpDeclareLocal, Name: "i@0"},
 				{Op: ir.OpPushInt, IntValue: 0},
@@ -82,5 +85,53 @@ func TestExecuteLoopAndJump(t *testing.T) {
 	}
 	if out.String() != "0\n1\n2\n" {
 		t.Fatalf("Execute() output = %q, want %q", out.String(), "0\n1\n2\n")
+	}
+}
+
+func TestExecuteUserFunctionCall(t *testing.T) {
+	irProgram := &ir.Program{
+		Functions: []ir.Function{
+			{
+				Name:       "add",
+				ReturnType: ast.TypeInt,
+				ParamSlots: []string{"a@0", "b@1"},
+				Instructions: []ir.Instruction{
+					{Op: ir.OpLoadLocal, Name: "a@0"},
+					{Op: ir.OpLoadLocal, Name: "b@1"},
+					{Op: ir.OpAddInt},
+					{Op: ir.OpReturn},
+				},
+			},
+			{
+				Name:       "main",
+				ReturnType: ast.TypeInt,
+				Instructions: []ir.Instruction{
+					{Op: ir.OpPushInt, IntValue: 7},
+					{Op: ir.OpPushInt, IntValue: 8},
+					{Op: ir.OpCallFunc, Name: "add", ArgCount: 2},
+					{Op: ir.OpCallBuiltin, Name: "print_int", ArgCount: 1},
+					{Op: ir.OpCallBuiltin, Name: "print_newline", ArgCount: 0},
+					{Op: ir.OpPushInt, IntValue: 0},
+					{Op: ir.OpReturn},
+				},
+			},
+		},
+	}
+
+	program, err := Compile(irProgram)
+	if err != nil {
+		t.Fatalf("Compile() error = %v", err)
+	}
+
+	var out bytes.Buffer
+	ret, err := Execute(program, &out)
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if ret != 0 {
+		t.Fatalf("Execute() return = %d, want 0", ret)
+	}
+	if out.String() != "15\n" {
+		t.Fatalf("Execute() output = %q, want %q", out.String(), "15\n")
 	}
 }

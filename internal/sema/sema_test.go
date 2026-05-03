@@ -48,3 +48,40 @@ func TestAnalyzeRejectsDuplicateDeclSameScope(t *testing.T) {
 		t.Fatalf("Analyze() error = %q, want %q", got, want)
 	}
 }
+
+func TestAnalyzeRejectsForwardFunctionCall(t *testing.T) {
+	tokens, err := lexer.Tokenize("int main() { return add(1, 2); } int add(int a, int b) { return a + b; }")
+	if err != nil {
+		t.Fatalf("Tokenize() error = %v", err)
+	}
+
+	program, err := parser.Parse(tokens)
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+
+	err = Analyze(program)
+	if err == nil {
+		t.Fatal("Analyze() error = nil, want non-nil")
+	}
+
+	if got, want := err.Error(), "semantic: call to unknown function \"add\" at 1:21"; got != want {
+		t.Fatalf("Analyze() error = %q, want %q", got, want)
+	}
+}
+
+func TestAnalyzeAcceptsDefinedFunctionCall(t *testing.T) {
+	tokens, err := lexer.Tokenize("int add(int a, int b) { return a + b; } int main() { return add(1, 2); }")
+	if err != nil {
+		t.Fatalf("Tokenize() error = %v", err)
+	}
+
+	program, err := parser.Parse(tokens)
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+
+	if err := Analyze(program); err != nil {
+		t.Fatalf("Analyze() error = %v", err)
+	}
+}

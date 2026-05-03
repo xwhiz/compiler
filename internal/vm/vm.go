@@ -5,6 +5,7 @@ import (
 	"io"
 	"strings"
 
+	"github.com/xwhiz/compiler/internal/ast"
 	"github.com/xwhiz/compiler/internal/ir"
 )
 
@@ -34,6 +35,7 @@ const (
 	OpJump         Op = "JUMP"
 	OpJumpIfZero   Op = "JUMP_IF_ZERO"
 	OpCallBuiltin  Op = "CALL_BUILTIN"
+	OpCallFunc     Op = "CALL_FUNC"
 	OpRet          Op = "RET"
 )
 
@@ -43,6 +45,8 @@ type Program struct {
 
 type Function struct {
 	Name         string
+	ReturnType   ast.TypeName
+	ParamSlots   []string
 	Instructions []Instruction
 }
 
@@ -80,7 +84,12 @@ func Format(program *Program) string {
 		if i > 0 {
 			b.WriteByte('\n')
 		}
-		fmt.Fprintf(&b, "func %s\n", fn.Name)
+		fmt.Fprintf(&b, "func %s return=%s\n", fn.Name, fn.ReturnType)
+		if len(fn.ParamSlots) == 0 {
+			b.WriteString("  params <empty>\n")
+		} else {
+			fmt.Fprintf(&b, "  params %s\n", strings.Join(fn.ParamSlots, ", "))
+		}
 		for _, inst := range fn.Instructions {
 			fmt.Fprintf(&b, "  %s\n", inst.String())
 		}
@@ -95,10 +104,26 @@ func Execute(program *Program, stdout io.Writer) (int64, error) {
 		return 0, fmt.Errorf("vm: missing main function")
 	}
 
-	stack := make([]Value, 0, 16)
+	ret, err := executeFunction(program, mainFn, nil, stdout)
+	if err != nil {
+		return 0, err
+	}
+	return ret.Int, nil
+}
+
+func executeFunction(program *Program, fn Function, args []Value, stdout io.Writer) (Value, error) {
+	if len(args) != len(fn.ParamSlots) {
+		return Value{}, fmt.Errorf("vm: function %s wants %d args, got %d", fn.Name, len(fn.ParamSlots), len(args))
+	}
+
 	fr := frame{locals: map[string]Value{}}
-	for pc := 0; pc < len(mainFn.Instructions); pc++ {
-		inst := mainFn.Instructions[pc]
+	for i, slot := range fn.ParamSlots {
+		fr.locals[slot] = args[i]
+	}
+
+	stack := make([]Value, 0, 16)
+	for pc := 0; pc < len(fn.Instructions); pc++ {
+		inst := fn.Instructions[pc]
 		switch inst.Op {
 		case OpDeclareLocal:
 			fr.locals[inst.Name] = Value{}
@@ -107,16 +132,16 @@ func Execute(program *Program, stdout io.Writer) (int64, error) {
 		case OpLoadLocal:
 			value, ok := fr.locals[inst.Name]
 			if !ok {
-				return 0, fmt.Errorf("vm: unknown local %q", inst.Name)
+				return Value{}, fmt.Errorf("vm: unknown local %q", inst.Name)
 			}
 			stack = append(stack, value)
 		case OpStoreLocal:
 			value, rest, err := popOne(stack)
 			if err != nil {
-				return 0, err
+				return Value{}, err
 			}
 			if _, ok := fr.locals[inst.Name]; !ok {
-				return 0, fmt.Errorf("vm: unknown local %q", inst.Name)
+				return Value{}, fmt.Errorf("vm: unknown local %q", inst.Name)
 			}
 			fr.locals[inst.Name] = value
 			stack = rest
@@ -124,19 +149,19 @@ func Execute(program *Program, stdout io.Writer) (int64, error) {
 			var err error
 			stack, err = binaryIntOp(stack, func(a, b int64) (int64, error) { return a + b, nil })
 			if err != nil {
-				return 0, err
+				return Value{}, err
 			}
 		case OpSubInt:
 			var err error
 			stack, err = binaryIntOp(stack, func(a, b int64) (int64, error) { return a - b, nil })
 			if err != nil {
-				return 0, err
+				return Value{}, err
 			}
 		case OpMulInt:
 			var err error
 			stack, err = binaryIntOp(stack, func(a, b int64) (int64, error) { return a * b, nil })
 			if err != nil {
-				return 0, err
+				return Value{}, err
 			}
 		case OpDivInt:
 			var err error
@@ -147,7 +172,7 @@ func Execute(program *Program, stdout io.Writer) (int64, error) {
 				return a / b, nil
 			})
 			if err != nil {
-				return 0, err
+				return Value{}, err
 			}
 		case OpModInt:
 			var err error
@@ -158,72 +183,72 @@ func Execute(program *Program, stdout io.Writer) (int64, error) {
 				return a % b, nil
 			})
 			if err != nil {
-				return 0, err
+				return Value{}, err
 			}
 		case OpNegInt:
 			value, rest, err := popOne(stack)
 			if err != nil {
-				return 0, err
+				return Value{}, err
 			}
 			stack = append(rest, Value{Int: -value.Int})
 		case OpNotInt:
 			value, rest, err := popOne(stack)
 			if err != nil {
-				return 0, err
+				return Value{}, err
 			}
 			stack = append(rest, truthyBool(value.Int == 0))
 		case OpLTInt:
 			var err error
 			stack, err = compareIntOp(stack, func(a, b int64) bool { return a < b })
 			if err != nil {
-				return 0, err
+				return Value{}, err
 			}
 		case OpLEInt:
 			var err error
 			stack, err = compareIntOp(stack, func(a, b int64) bool { return a <= b })
 			if err != nil {
-				return 0, err
+				return Value{}, err
 			}
 		case OpGTInt:
 			var err error
 			stack, err = compareIntOp(stack, func(a, b int64) bool { return a > b })
 			if err != nil {
-				return 0, err
+				return Value{}, err
 			}
 		case OpGEInt:
 			var err error
 			stack, err = compareIntOp(stack, func(a, b int64) bool { return a >= b })
 			if err != nil {
-				return 0, err
+				return Value{}, err
 			}
 		case OpEQInt:
 			var err error
 			stack, err = compareIntOp(stack, func(a, b int64) bool { return a == b })
 			if err != nil {
-				return 0, err
+				return Value{}, err
 			}
 		case OpNEInt:
 			var err error
 			stack, err = compareIntOp(stack, func(a, b int64) bool { return a != b })
 			if err != nil {
-				return 0, err
+				return Value{}, err
 			}
 		case OpAndInt:
 			var err error
 			stack, err = compareIntOp(stack, func(a, b int64) bool { return a != 0 && b != 0 })
 			if err != nil {
-				return 0, err
+				return Value{}, err
 			}
 		case OpOrInt:
 			var err error
 			stack, err = compareIntOp(stack, func(a, b int64) bool { return a != 0 || b != 0 })
 			if err != nil {
-				return 0, err
+				return Value{}, err
 			}
 		case OpPop:
 			_, rest, err := popOne(stack)
 			if err != nil {
-				return 0, err
+				return Value{}, err
 			}
 			stack = rest
 		case OpJump:
@@ -231,32 +256,49 @@ func Execute(program *Program, stdout io.Writer) (int64, error) {
 		case OpJumpIfZero:
 			value, rest, err := popOne(stack)
 			if err != nil {
-				return 0, err
+				return Value{}, err
 			}
 			stack = rest
 			if value.Int == 0 {
 				pc = inst.Target - 1
 			}
 		case OpCallBuiltin:
-			args, rest, err := popArgs(stack, inst.ArgCount)
+			callArgs, rest, err := popArgs(stack, inst.ArgCount)
 			if err != nil {
-				return 0, err
+				return Value{}, err
 			}
 			stack = rest
-			if err := callBuiltin(inst.Name, args, stdout); err != nil {
-				return 0, err
+			if err := callBuiltin(inst.Name, callArgs, stdout); err != nil {
+				return Value{}, err
+			}
+		case OpCallFunc:
+			callArgs, rest, err := popArgs(stack, inst.ArgCount)
+			if err != nil {
+				return Value{}, err
+			}
+			stack = rest
+			callee, ok := findFunction(program, inst.Name)
+			if !ok {
+				return Value{}, fmt.Errorf("vm: unknown function %q", inst.Name)
+			}
+			ret, err := executeFunction(program, callee, callArgs, stdout)
+			if err != nil {
+				return Value{}, err
+			}
+			if callee.ReturnType != ast.TypeVoid {
+				stack = append(stack, ret)
 			}
 		case OpRet:
 			if len(stack) == 0 {
-				return 0, nil
+				return Value{}, nil
 			}
-			return stack[len(stack)-1].Int, nil
+			return stack[len(stack)-1], nil
 		default:
-			return 0, fmt.Errorf("vm: unsupported instruction %q", inst.Op)
+			return Value{}, fmt.Errorf("vm: unsupported instruction %q", inst.Op)
 		}
 	}
 
-	return 0, nil
+	return Value{}, nil
 }
 
 func (i Instruction) String() string {
@@ -267,7 +309,7 @@ func (i Instruction) String() string {
 		return fmt.Sprintf("%s %d", i.Op, i.IntValue)
 	case OpJump, OpJumpIfZero:
 		return fmt.Sprintf("%s %d (%s)", i.Op, i.Target, i.Name)
-	case OpCallBuiltin:
+	case OpCallBuiltin, OpCallFunc:
 		return fmt.Sprintf("%s %s %d", i.Op, i.Name, i.ArgCount)
 	default:
 		return string(i.Op)
@@ -275,7 +317,7 @@ func (i Instruction) String() string {
 }
 
 func compileFunction(fn ir.Function) (Function, error) {
-	compiled := Function{Name: fn.Name}
+	compiled := Function{Name: fn.Name, ReturnType: fn.ReturnType, ParamSlots: append([]string(nil), fn.ParamSlots...)}
 	labels := map[string]int{}
 	pc := 0
 	for _, inst := range fn.Instructions {
@@ -344,6 +386,8 @@ func compileFunction(fn ir.Function) (Function, error) {
 			compiled.Instructions = append(compiled.Instructions, Instruction{Op: OpJumpIfZero, Name: inst.Name, Target: target})
 		case ir.OpCallBuiltin:
 			compiled.Instructions = append(compiled.Instructions, Instruction{Op: OpCallBuiltin, Name: inst.Name, ArgCount: inst.ArgCount})
+		case ir.OpCallFunc:
+			compiled.Instructions = append(compiled.Instructions, Instruction{Op: OpCallFunc, Name: inst.Name, ArgCount: inst.ArgCount})
 		case ir.OpReturn:
 			compiled.Instructions = append(compiled.Instructions, Instruction{Op: OpRet})
 		default:

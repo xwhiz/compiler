@@ -45,10 +45,17 @@ type Program struct {
 	Functions []*FuncDecl
 }
 
+type Param struct {
+	Pos  token.Position
+	Type TypeName
+	Name string
+}
+
 type FuncDecl struct {
 	ReturnType TypeName
 	Name       string
 	Pos        token.Position
+	Params     []Param
 	Body       *BlockStmt
 }
 
@@ -165,7 +172,14 @@ func FormatProgram(program *Program) string {
 
 func writeFunc(b *strings.Builder, level int, fn *FuncDecl) {
 	writeLine(b, level, fmt.Sprintf("FuncDecl name=%s return=%s", fn.Name, fn.ReturnType))
-	writeLine(b, level+1, "Params <empty>")
+	if len(fn.Params) == 0 {
+		writeLine(b, level+1, "Params <empty>")
+	} else {
+		writeLine(b, level+1, "Params")
+		for _, param := range fn.Params {
+			writeLine(b, level+2, fmt.Sprintf("Param name=%s type=%s", param.Name, param.Type))
+		}
+	}
 	writeLine(b, level+1, "Body")
 	writeBlock(b, level+2, fn.Body)
 }

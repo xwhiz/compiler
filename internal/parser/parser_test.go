@@ -150,3 +150,27 @@ func TestParseIfWhile(t *testing.T) {
 		t.Fatalf("stmt type = %T, want *ast.WhileStmt", stmts[1])
 	}
 }
+
+func TestParseFunctionParams(t *testing.T) {
+	source := "int add(int a, int b) { return a + b; } int main(void) { return add(2, 3); }"
+	tokens, err := lexer.Tokenize(source)
+	if err != nil {
+		t.Fatalf("Tokenize() error = %v", err)
+	}
+
+	program, err := Parse(tokens)
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+
+	if len(program.Functions) != 2 {
+		t.Fatalf("len(program.Functions) = %d, want 2", len(program.Functions))
+	}
+	add := program.Functions[0]
+	if len(add.Params) != 2 {
+		t.Fatalf("len(add.Params) = %d, want 2", len(add.Params))
+	}
+	if add.Params[0].Name != "a" || add.Params[1].Name != "b" {
+		t.Fatalf("param names = %q, %q; want a, b", add.Params[0].Name, add.Params[1].Name)
+	}
+}

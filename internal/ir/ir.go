@@ -35,6 +35,7 @@ const (
 	OpJump         Op = "jump"
 	OpJumpIfZero   Op = "jump_if_zero"
 	OpCallBuiltin  Op = "call_builtin"
+	OpCallFunc     Op = "call_func"
 	OpReturn       Op = "return"
 )
 
@@ -44,6 +45,8 @@ type Program struct {
 
 type Function struct {
 	Name         string
+	ReturnType   ast.TypeName
+	ParamSlots   []string
 	Instructions []Instruction
 }
 
@@ -54,16 +57,30 @@ type Instruction struct {
 	ArgCount int
 }
 
+type funcInfo struct {
+	ret     ast.TypeName
+	builtin bool
+}
+
 type lowerer struct {
+	funcs      map[string]funcInfo
 	scopes     []map[string]string
 	nextSlotID int
 	nextLabel  int
 }
 
 func Lower(program *ast.Program) (*Program, error) {
+	funcs := map[string]funcInfo{
+		"print_int":     {ret: ast.TypeVoid, builtin: true},
+		"print_newline": {ret: ast.TypeVoid, builtin: true},
+	}
+	for _, fn := range program.Functions {
+		funcs[fn.Name] = funcInfo{ret: fn.ReturnType}
+	}
+
 	out := &Program{}
 	for _, fn := range program.Functions {
-		lowered, err := lowerFunc(fn)
+		lowered, err := lowerFunc(fn, funcs)
 		if err != nil {
 			return nil, err
 		}
@@ -78,7 +95,12 @@ func Format(program *Program) string {
 		if i > 0 {
 			b.WriteByte('\n')
 		}
-		fmt.Fprintf(&b, "func %s\n", fn.Name)
+		fmt.Fprintf(&b, "func %s return=%s\n", fn.Name, fn.ReturnType)
+		if len(fn.ParamSlots) == 0 {
+			b.WriteString("  params <empty>\n")
+		} else {
+			fmt.Fprintf(&b, "  params %s\n", strings.Join(fn.ParamSlots, ", "))
+		}
 		for _, inst := range fn.Instructions {
 			fmt.Fprintf(&b, "  %s\n", inst.String())
 		}
@@ -93,19 +115,25 @@ func (i Instruction) String() string {
 		return fmt.Sprintf("%s %s", i.Op, i.Name)
 	case OpPushInt:
 		return fmt.Sprintf("%s %d", i.Op, i.IntValue)
-	case OpCallBuiltin:
+	case OpCallBuiltin, OpCallFunc:
 		return fmt.Sprintf("%s %s %d", i.Op, i.Name, i.ArgCount)
 	default:
 		return string(i.Op)
 	}
 }
 
-func lowerFunc(fn *ast.FuncDecl) (*Function, error) {
-	out := &Function{Name: fn.Name}
-	l := &lowerer{}
+func lowerFunc(fn *ast.FuncDecl, funcs map[string]funcInfo) (*Function, error) {
+	out := &Function{Name: fn.Name, ReturnType: fn.ReturnType}
+	l := &lowerer{funcs: funcs}
+	l.pushScope()
+	for _, param := range fn.Params {
+		slot := l.declare(param.Name)
+		out.ParamSlots = append(out.ParamSlots, slot)
+	}
 	if err := l.lowerBlock(fn.Body, out); err != nil {
 		return nil, err
 	}
+	l.popScope()
 	return out, nil
 }
 
@@ -218,8 +246,16 @@ func (l *lowerer) lowerExpr(expr ast.Expr, fn *Function) (bool, error) {
 				return false, err
 			}
 		}
-		fn.Instructions = append(fn.Instructions, Instruction{Op: OpCallBuiltin, Name: node.Callee, ArgCount: len(node.Args)})
-		return false, nil
+		info, ok := l.funcs[node.Callee]
+		if !ok {
+			return false, fmt.Errorf("ir: unknown function %q", node.Callee)
+		}
+		if info.builtin {
+			fn.Instructions = append(fn.Instructions, Instruction{Op: OpCallBuiltin, Name: node.Callee, ArgCount: len(node.Args)})
+		} else {
+			fn.Instructions = append(fn.Instructions, Instruction{Op: OpCallFunc, Name: node.Callee, ArgCount: len(node.Args)})
+		}
+		return info.ret != ast.TypeVoid, nil
 	case *ast.AssignExpr:
 		slot, ok := l.lookup(node.Name)
 		if !ok {
