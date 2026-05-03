@@ -2,6 +2,7 @@ package parser
 
 import (
 	"fmt"
+	"strconv"
 
 	"github.com/xwhiz/compiler/internal/ast"
 	"github.com/xwhiz/compiler/internal/token"
@@ -26,11 +27,9 @@ func (p *Parser) parseProgram() (*ast.Program, error) {
 		}
 		program.Functions = append(program.Functions, fn)
 	}
-
 	if _, err := p.consume(token.EOF, "expected end of file"); err != nil {
 		return nil, err
 	}
-
 	return program, nil
 }
 
@@ -39,12 +38,10 @@ func (p *Parser) parseFuncDecl() (*ast.FuncDecl, error) {
 	if err != nil {
 		return nil, err
 	}
-
 	nameTok, err := p.consume(token.Identifier, "expected function name")
 	if err != nil {
 		return nil, err
 	}
-
 	if _, err := p.consume(token.LParen, "expected '(' after function name"); err != nil {
 		return nil, err
 	}
@@ -55,26 +52,17 @@ func (p *Parser) parseFuncDecl() (*ast.FuncDecl, error) {
 	if _, err := p.consume(token.RParen, "expected ')' after parameter list"); err != nil {
 		return nil, err
 	}
-
 	body, err := p.parseBlockStmt()
 	if err != nil {
 		return nil, err
 	}
-
-	return &ast.FuncDecl{
-		ReturnType: retType,
-		Name:       nameTok.Lexeme,
-		Pos:        pos,
-		Params:     params,
-		Body:       body,
-	}, nil
+	return &ast.FuncDecl{ReturnType: retType, Name: nameTok.Lexeme, Pos: pos, Params: params, Body: body}, nil
 }
 
 func (p *Parser) parseParams() ([]ast.Param, error) {
 	if p.check(token.RParen) {
 		return nil, nil
 	}
-
 	if p.peek().Type == token.KeywordVoid {
 		typeName, pos, err := p.parseTypeName()
 		if err != nil {
@@ -82,7 +70,7 @@ func (p *Parser) parseParams() ([]ast.Param, error) {
 		}
 		if p.check(token.RParen) {
 			if typeName != ast.TypeVoid {
-				return nil, p.errorAtTokenPos(pos, "internal error: non-void empty parameter list")
+				return nil, p.errorAtTokenPos(pos, "internal error: invalid void parameter list")
 			}
 			return nil, nil
 		}
@@ -153,7 +141,6 @@ func (p *Parser) parseBlockStmt() (*ast.BlockStmt, error) {
 	if err != nil {
 		return nil, err
 	}
-
 	block := &ast.BlockStmt{Pos: start.Pos}
 	for isTypeToken(p.peek().Type) {
 		decl, err := p.parseVarDeclStmt()
@@ -162,7 +149,6 @@ func (p *Parser) parseBlockStmt() (*ast.BlockStmt, error) {
 		}
 		block.Stmts = append(block.Stmts, decl)
 	}
-
 	for !p.check(token.RBrace) && !p.check(token.EOF) {
 		stmt, err := p.parseStmt()
 		if err != nil {
@@ -170,11 +156,9 @@ func (p *Parser) parseBlockStmt() (*ast.BlockStmt, error) {
 		}
 		block.Stmts = append(block.Stmts, stmt)
 	}
-
 	if _, err := p.consume(token.RBrace, "expected '}' to close block"); err != nil {
 		return nil, err
 	}
-
 	return block, nil
 }
 
@@ -183,13 +167,25 @@ func (p *Parser) parseVarDeclStmt() (ast.Stmt, error) {
 	if err != nil {
 		return nil, err
 	}
-
 	nameTok, err := p.consume(token.Identifier, "expected variable name")
 	if err != nil {
 		return nil, err
 	}
-
 	decl := &ast.VarDeclStmt{Pos: pos, Type: typeName, Name: nameTok.Lexeme}
+	if p.match(token.LBracket) {
+		lenTok, err := p.consume(token.IntLiteral, "expected array length")
+		if err != nil {
+			return nil, err
+		}
+		length, err := strconv.Atoi(lenTok.Lexeme)
+		if err != nil {
+			return nil, fmt.Errorf("%s: invalid array length %q", lenTok.Pos, lenTok.Lexeme)
+		}
+		decl.ArrayLen = length
+		if _, err := p.consume(token.RBracket, "expected ']' after array length"); err != nil {
+			return nil, err
+		}
+	}
 	if p.match(token.Assign) {
 		init, err := p.parseExpr()
 		if err != nil {
@@ -197,11 +193,9 @@ func (p *Parser) parseVarDeclStmt() (ast.Stmt, error) {
 		}
 		decl.Init = init
 	}
-
 	if _, err := p.consume(token.Semicolon, "expected ';' after declaration"); err != nil {
 		return nil, err
 	}
-
 	return decl, nil
 }
 
@@ -277,7 +271,6 @@ func (p *Parser) parseReturnStmt() (ast.Stmt, error) {
 	if err != nil {
 		return nil, err
 	}
-
 	stmt := &ast.ReturnStmt{Pos: retTok.Pos}
 	if !p.check(token.Semicolon) {
 		expr, err := p.parseExpr()
@@ -286,11 +279,9 @@ func (p *Parser) parseReturnStmt() (ast.Stmt, error) {
 		}
 		stmt.Value = expr
 	}
-
 	if _, err := p.consume(token.Semicolon, "expected ';' after return statement"); err != nil {
 		return nil, err
 	}
-
 	return stmt, nil
 }
 
@@ -299,39 +290,32 @@ func (p *Parser) parseExprStmt() (ast.Stmt, error) {
 	if err != nil {
 		return nil, err
 	}
-
 	if _, err := p.consume(token.Semicolon, "expected ';' after expression statement"); err != nil {
 		return nil, err
 	}
-
 	return &ast.ExprStmt{Pos: exprPos(expr), Expr: expr}, nil
 }
 
-func (p *Parser) parseExpr() (ast.Expr, error) {
-	return p.parseAssignment()
-}
+func (p *Parser) parseExpr() (ast.Expr, error) { return p.parseAssignment() }
 
 func (p *Parser) parseAssignment() (ast.Expr, error) {
 	left, err := p.parseLogicalOr()
 	if err != nil {
 		return nil, err
 	}
-
 	if !p.match(token.Assign) {
 		return left, nil
 	}
-
-	ident, ok := left.(*ast.IdentExpr)
-	if !ok {
-		return nil, p.errorAtTokenPos(exprPos(left), "expected identifier on left side of assignment")
+	switch left.(type) {
+	case *ast.IdentExpr, *ast.IndexExpr:
+	default:
+		return nil, p.errorAtTokenPos(exprPos(left), "expected identifier or array element on left side of assignment")
 	}
-
 	right, err := p.parseAssignment()
 	if err != nil {
 		return nil, err
 	}
-
-	return &ast.AssignExpr{Pos: ident.Pos, Name: ident.Name, Value: right}, nil
+	return &ast.AssignExpr{Pos: exprPos(left), Target: left, Value: right}, nil
 }
 
 func (p *Parser) parseLogicalOr() (ast.Expr, error) {
@@ -425,7 +409,6 @@ func (p *Parser) parseAdditive() (ast.Expr, error) {
 	if err != nil {
 		return nil, err
 	}
-
 	for {
 		tok := p.peek()
 		var op ast.BinaryOp
@@ -437,7 +420,6 @@ func (p *Parser) parseAdditive() (ast.Expr, error) {
 		default:
 			return left, nil
 		}
-
 		p.advance()
 		right, err := p.parseMultiplicative()
 		if err != nil {
@@ -452,7 +434,6 @@ func (p *Parser) parseMultiplicative() (ast.Expr, error) {
 	if err != nil {
 		return nil, err
 	}
-
 	for {
 		tok := p.peek()
 		var op ast.BinaryOp
@@ -466,7 +447,6 @@ func (p *Parser) parseMultiplicative() (ast.Expr, error) {
 		default:
 			return left, nil
 		}
-
 		p.advance()
 		right, err := p.parseUnary()
 		if err != nil {
@@ -493,8 +473,55 @@ func (p *Parser) parseUnary() (ast.Expr, error) {
 		}
 		return &ast.UnaryExpr{Pos: pos, Op: ast.UnaryNot, Value: value}, nil
 	}
+	return p.parsePostfix()
+}
 
-	return p.parsePrimary()
+func (p *Parser) parsePostfix() (ast.Expr, error) {
+	expr, err := p.parsePrimary()
+	if err != nil {
+		return nil, err
+	}
+	for {
+		switch {
+		case p.match(token.LParen):
+			ident, ok := expr.(*ast.IdentExpr)
+			if !ok {
+				return nil, p.errorAtTokenPos(exprPos(expr), "expected function name before '('")
+			}
+			call := &ast.CallExpr{Pos: ident.Pos, Callee: ident.Name}
+			if !p.check(token.RParen) {
+				for {
+					arg, err := p.parseExpr()
+					if err != nil {
+						return nil, err
+					}
+					call.Args = append(call.Args, arg)
+					if !p.match(token.Comma) {
+						break
+					}
+				}
+			}
+			if _, err := p.consume(token.RParen, "expected ')' after argument list"); err != nil {
+				return nil, err
+			}
+			expr = call
+		case p.match(token.LBracket):
+			ident, ok := expr.(*ast.IdentExpr)
+			if !ok {
+				return nil, p.errorAtTokenPos(exprPos(expr), "expected array name before '['")
+			}
+			index, err := p.parseExpr()
+			if err != nil {
+				return nil, err
+			}
+			if _, err := p.consume(token.RBracket, "expected ']' after index"); err != nil {
+				return nil, err
+			}
+			expr = &ast.IndexExpr{Pos: ident.Pos, Name: ident.Name, Index: index}
+		default:
+			return expr, nil
+		}
+	}
 }
 
 func (p *Parser) parsePrimary() (ast.Expr, error) {
@@ -503,8 +530,18 @@ func (p *Parser) parsePrimary() (ast.Expr, error) {
 	case token.IntLiteral:
 		p.advance()
 		return &ast.IntLiteral{Pos: tok.Pos, Lexeme: tok.Lexeme}, nil
+	case token.FloatLiteral:
+		p.advance()
+		return &ast.FloatLiteral{Pos: tok.Pos, Lexeme: tok.Lexeme}, nil
+	case token.CharLiteral:
+		p.advance()
+		return &ast.CharLiteral{Pos: tok.Pos, Lexeme: tok.Lexeme}, nil
+	case token.StringLiteral:
+		p.advance()
+		return &ast.StringLiteral{Pos: tok.Pos, Lexeme: tok.Lexeme}, nil
 	case token.Identifier:
-		return p.parseIdentifierExprOrCall()
+		p.advance()
+		return &ast.IdentExpr{Pos: tok.Pos, Name: tok.Lexeme}, nil
 	case token.LParen:
 		p.advance()
 		expr, err := p.parseExpr()
@@ -520,38 +557,6 @@ func (p *Parser) parsePrimary() (ast.Expr, error) {
 	}
 }
 
-func (p *Parser) parseIdentifierExprOrCall() (ast.Expr, error) {
-	nameTok, err := p.consume(token.Identifier, "expected identifier")
-	if err != nil {
-		return nil, err
-	}
-
-	if !p.match(token.LParen) {
-		return &ast.IdentExpr{Pos: nameTok.Pos, Name: nameTok.Lexeme}, nil
-	}
-
-	call := &ast.CallExpr{Pos: nameTok.Pos, Callee: nameTok.Lexeme}
-	if !p.check(token.RParen) {
-		for {
-			arg, err := p.parseExpr()
-			if err != nil {
-				return nil, err
-			}
-			call.Args = append(call.Args, arg)
-
-			if !p.match(token.Comma) {
-				break
-			}
-		}
-	}
-
-	if _, err := p.consume(token.RParen, "expected ')' after argument list"); err != nil {
-		return nil, err
-	}
-
-	return call, nil
-}
-
 func (p *Parser) consume(want token.Type, message string) (token.Token, error) {
 	tok := p.peek()
 	if tok.Type != want {
@@ -561,9 +566,7 @@ func (p *Parser) consume(want token.Type, message string) (token.Token, error) {
 	return tok, nil
 }
 
-func (p *Parser) check(want token.Type) bool {
-	return p.peek().Type == want
-}
+func (p *Parser) check(want token.Type) bool { return p.peek().Type == want }
 
 func (p *Parser) match(want token.Type) bool {
 	if !p.check(want) {
@@ -605,7 +608,15 @@ func exprPos(expr ast.Expr) token.Position {
 	switch node := expr.(type) {
 	case *ast.IntLiteral:
 		return node.Pos
+	case *ast.FloatLiteral:
+		return node.Pos
+	case *ast.CharLiteral:
+		return node.Pos
+	case *ast.StringLiteral:
+		return node.Pos
 	case *ast.IdentExpr:
+		return node.Pos
+	case *ast.IndexExpr:
 		return node.Pos
 	case *ast.CallExpr:
 		return node.Pos

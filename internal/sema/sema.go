@@ -2,18 +2,35 @@ package sema
 
 import (
 	"fmt"
-	"maps"
 
 	"github.com/xwhiz/compiler/internal/ast"
 )
 
+type paramSig struct {
+	typ                ast.TypeName
+	wantArray          bool
+	allowStringLiteral bool
+}
+
 type funcSig struct {
-	params  []ast.TypeName
+	params  []paramSig
 	ret     ast.TypeName
 	builtin bool
 }
 
-type scope map[string]ast.TypeName
+type symbol struct {
+	typ      ast.TypeName
+	arrayLen int
+}
+
+type scope map[string]symbol
+
+type exprInfo struct {
+	typ             ast.TypeName
+	arrayLen        int
+	isLValue        bool
+	isStringLiteral bool
+}
 
 type analyzer struct {
 	scopes []scope
@@ -21,7 +38,10 @@ type analyzer struct {
 }
 
 var builtins = map[string]funcSig{
-	"print_int":     {params: []ast.TypeName{ast.TypeInt}, ret: ast.TypeVoid, builtin: true},
+	"print_int":     {params: []paramSig{{typ: ast.TypeInt}}, ret: ast.TypeVoid, builtin: true},
+	"print_float":   {params: []paramSig{{typ: ast.TypeFloat}}, ret: ast.TypeVoid, builtin: true},
+	"print_char":    {params: []paramSig{{typ: ast.TypeChar}}, ret: ast.TypeVoid, builtin: true},
+	"print_str":     {params: []paramSig{{typ: ast.TypeChar, wantArray: true, allowStringLiteral: true}}, ret: ast.TypeVoid, builtin: true},
 	"print_newline": {params: nil, ret: ast.TypeVoid, builtin: true},
 }
 
@@ -29,10 +49,10 @@ func Analyze(program *ast.Program) error {
 	if len(program.Functions) == 0 {
 		return fmt.Errorf("semantic: missing function definitions")
 	}
-
 	a := &analyzer{funcs: map[string]funcSig{}}
-	maps.Copy(a.funcs, builtins)
-
+	for name, sig := range builtins {
+		a.funcs[name] = sig
+	}
 	hasMain := false
 	for _, fn := range program.Functions {
 		if fn.Name == "main" {
@@ -45,27 +65,33 @@ func Analyze(program *ast.Program) error {
 			return err
 		}
 	}
-
 	if !hasMain {
 		return fmt.Errorf("semantic: missing main function")
 	}
-
 	return nil
 }
 
 func (a *analyzer) registerFunc(fn *ast.FuncDecl) error {
-	if fn.ReturnType != ast.TypeInt && fn.ReturnType != ast.TypeVoid {
-		return fmt.Errorf("semantic: function return type %s not supported yet at %s", fn.ReturnType, fn.Pos)
+	if !isSupportedType(fn.ReturnType) && fn.ReturnType != ast.TypeVoid {
+		return fmt.Errorf("semantic: function return type %s not supported at %s", fn.ReturnType, fn.Pos)
 	}
 	if _, exists := a.funcs[fn.Name]; exists {
 		return fmt.Errorf("semantic: duplicate function %q at %s", fn.Name, fn.Pos)
 	}
-	params := make([]ast.TypeName, 0, len(fn.Params))
+	params := make([]paramSig, 0, len(fn.Params))
+	seen := map[string]struct{}{}
 	for _, param := range fn.Params {
-		if param.Type != ast.TypeInt {
+		if !isSupportedType(param.Type) {
 			return fmt.Errorf("semantic: parameter type %s not supported yet at %s", param.Type, param.Pos)
 		}
-		params = append(params, param.Type)
+		if param.Type == ast.TypeVoid {
+			return fmt.Errorf("semantic: parameter %q cannot have type void at %s", param.Name, param.Pos)
+		}
+		if _, ok := seen[param.Name]; ok {
+			return fmt.Errorf("semantic: duplicate parameter %q at %s", param.Name, param.Pos)
+		}
+		seen[param.Name] = struct{}{}
+		params = append(params, paramSig{typ: param.Type})
 	}
 	a.funcs[fn.Name] = funcSig{params: params, ret: fn.ReturnType}
 	return nil
@@ -74,20 +100,17 @@ func (a *analyzer) registerFunc(fn *ast.FuncDecl) error {
 func (a *analyzer) analyzeFunc(fn *ast.FuncDecl) error {
 	a.pushScope()
 	defer a.popScope()
-
 	for _, param := range fn.Params {
-		if err := a.declare(param.Name, param.Type, param.Pos); err != nil {
+		if err := a.declare(param.Name, symbol{typ: param.Type}, param.Pos); err != nil {
 			return err
 		}
 	}
-
 	return a.analyzeBlock(fn.Body, fn.ReturnType)
 }
 
 func (a *analyzer) analyzeBlock(block *ast.BlockStmt, returnType ast.TypeName) error {
 	a.pushScope()
 	defer a.popScope()
-
 	for _, stmt := range block.Stmts {
 		if err := a.analyzeStmt(stmt, returnType); err != nil {
 			return err
@@ -101,50 +124,60 @@ func (a *analyzer) analyzeStmt(stmt ast.Stmt, returnType ast.TypeName) error {
 	case *ast.BlockStmt:
 		return a.analyzeBlock(node, returnType)
 	case *ast.VarDeclStmt:
-		if node.Type != ast.TypeInt {
-			return fmt.Errorf("semantic: local type %s not supported yet at %s", node.Type, node.Pos)
-		}
 		if node.Type == ast.TypeVoid {
 			return fmt.Errorf("semantic: variable %q cannot have type void at %s", node.Name, node.Pos)
 		}
-		if err := a.declare(node.Name, node.Type, node.Pos); err != nil {
+		if !isSupportedType(node.Type) {
+			return fmt.Errorf("semantic: local type %s not supported at %s", node.Type, node.Pos)
+		}
+		if node.ArrayLen < 0 {
+			return fmt.Errorf("semantic: invalid array length for %q at %s", node.Name, node.Pos)
+		}
+		if err := a.declare(node.Name, symbol{typ: node.Type, arrayLen: node.ArrayLen}, node.Pos); err != nil {
 			return err
 		}
 		if node.Init == nil {
 			return nil
 		}
-		initType, err := a.exprType(node.Init)
+		info, err := a.exprType(node.Init)
 		if err != nil {
 			return err
 		}
-		if initType != node.Type {
-			return fmt.Errorf("semantic: initializer type mismatch for %s at %s: want %s, got %s", node.Name, node.Pos, node.Type, initType)
+		if node.ArrayLen > 0 {
+			if node.Type == ast.TypeChar && info.isStringLiteral {
+				if info.arrayLen > node.ArrayLen {
+					return fmt.Errorf("semantic: string initializer too long for %s at %s", node.Name, node.Pos)
+				}
+				return nil
+			}
+			return fmt.Errorf("semantic: array initializer for %s at %s not supported", node.Name, node.Pos)
+		}
+		if !assignable(node.Type, info) {
+			return fmt.Errorf("semantic: initializer type mismatch for %s at %s: want %s", node.Name, node.Pos, node.Type)
 		}
 		return nil
 	case *ast.IfStmt:
-		condType, err := a.exprType(node.Cond)
+		info, err := a.exprType(node.Cond)
 		if err != nil {
 			return err
 		}
-		if condType != ast.TypeInt {
-			return fmt.Errorf("semantic: if condition at %s must be int", node.Pos)
+		if !isNumericScalar(info) {
+			return fmt.Errorf("semantic: if condition at %s must be numeric scalar", node.Pos)
 		}
 		if err := a.analyzeStmt(node.Then, returnType); err != nil {
 			return err
 		}
 		if node.Else != nil {
-			if err := a.analyzeStmt(node.Else, returnType); err != nil {
-				return err
-			}
+			return a.analyzeStmt(node.Else, returnType)
 		}
 		return nil
 	case *ast.WhileStmt:
-		condType, err := a.exprType(node.Cond)
+		info, err := a.exprType(node.Cond)
 		if err != nil {
 			return err
 		}
-		if condType != ast.TypeInt {
-			return fmt.Errorf("semantic: while condition at %s must be int", node.Pos)
+		if !isNumericScalar(info) {
+			return fmt.Errorf("semantic: while condition at %s must be numeric scalar", node.Pos)
 		}
 		return a.analyzeStmt(node.Body, returnType)
 	case *ast.ReturnStmt:
@@ -157,12 +190,12 @@ func (a *analyzer) analyzeStmt(stmt ast.Stmt, returnType ast.TypeName) error {
 		if node.Value == nil {
 			return fmt.Errorf("semantic: %s function must return value at %s", returnType, node.Pos)
 		}
-		typeName, err := a.exprType(node.Value)
+		info, err := a.exprType(node.Value)
 		if err != nil {
 			return err
 		}
-		if typeName != returnType {
-			return fmt.Errorf("semantic: return type mismatch at %s: want %s, got %s", node.Pos, returnType, typeName)
+		if !assignable(returnType, info) {
+			return fmt.Errorf("semantic: return type mismatch at %s: want %s", node.Pos, returnType)
 		}
 		return nil
 	case *ast.ExprStmt:
@@ -173,99 +206,204 @@ func (a *analyzer) analyzeStmt(stmt ast.Stmt, returnType ast.TypeName) error {
 	}
 }
 
-func (a *analyzer) exprType(expr ast.Expr) (ast.TypeName, error) {
+func (a *analyzer) exprType(expr ast.Expr) (exprInfo, error) {
 	switch node := expr.(type) {
 	case *ast.IntLiteral:
-		return ast.TypeInt, nil
+		return exprInfo{typ: ast.TypeInt}, nil
+	case *ast.FloatLiteral:
+		return exprInfo{typ: ast.TypeFloat}, nil
+	case *ast.CharLiteral:
+		return exprInfo{typ: ast.TypeChar}, nil
+	case *ast.StringLiteral:
+		return exprInfo{typ: ast.TypeChar, arrayLen: len(node.Lexeme) - 1, isStringLiteral: true}, nil
 	case *ast.IdentExpr:
-		typ, ok := a.lookup(node.Name)
+		sym, ok := a.lookup(node.Name)
 		if !ok {
-			return "", fmt.Errorf("semantic: unknown variable %q at %s", node.Name, node.Pos)
+			return exprInfo{}, fmt.Errorf("semantic: unknown variable %q at %s", node.Name, node.Pos)
 		}
-		return typ, nil
+		return exprInfo{typ: sym.typ, arrayLen: sym.arrayLen, isLValue: sym.arrayLen == 0}, nil
+	case *ast.IndexExpr:
+		sym, ok := a.lookup(node.Name)
+		if !ok {
+			return exprInfo{}, fmt.Errorf("semantic: unknown variable %q at %s", node.Name, node.Pos)
+		}
+		if sym.arrayLen == 0 {
+			return exprInfo{}, fmt.Errorf("semantic: %q is not an array at %s", node.Name, node.Pos)
+		}
+		indexInfo, err := a.exprType(node.Index)
+		if err != nil {
+			return exprInfo{}, err
+		}
+		if !isIntLikeScalar(indexInfo) {
+			return exprInfo{}, fmt.Errorf("semantic: array index for %s at %s must be int-like", node.Name, node.Pos)
+		}
+		return exprInfo{typ: sym.typ, isLValue: true}, nil
 	case *ast.CallExpr:
 		sig, ok := a.funcs[node.Callee]
 		if !ok {
-			return "", fmt.Errorf("semantic: call to unknown function %q at %s", node.Callee, node.Pos)
+			return exprInfo{}, fmt.Errorf("semantic: call to unknown function %q at %s", node.Callee, node.Pos)
 		}
 		if len(node.Args) != len(sig.params) {
-			return "", fmt.Errorf("semantic: wrong arg count for %s at %s: want %d, got %d", node.Callee, node.Pos, len(sig.params), len(node.Args))
+			return exprInfo{}, fmt.Errorf("semantic: wrong arg count for %s at %s: want %d, got %d", node.Callee, node.Pos, len(sig.params), len(node.Args))
 		}
 		for i, arg := range node.Args {
-			argType, err := a.exprType(arg)
+			info, err := a.exprType(arg)
 			if err != nil {
-				return "", err
+				return exprInfo{}, err
 			}
-			if argType != sig.params[i] {
-				return "", fmt.Errorf("semantic: arg %d for %s at %s: want %s, got %s", i+1, node.Callee, node.Pos, sig.params[i], argType)
+			if !paramAccepts(sig.params[i], info) {
+				return exprInfo{}, fmt.Errorf("semantic: arg %d for %s at %s has wrong type", i+1, node.Callee, node.Pos)
 			}
 		}
-		return sig.ret, nil
+		return exprInfo{typ: sig.ret}, nil
 	case *ast.AssignExpr:
-		lhsType, ok := a.lookup(node.Name)
-		if !ok {
-			return "", fmt.Errorf("semantic: unknown variable %q at %s", node.Name, node.Pos)
-		}
-		rhsType, err := a.exprType(node.Value)
+		target, err := a.exprType(node.Target)
 		if err != nil {
-			return "", err
+			return exprInfo{}, err
 		}
-		if lhsType != rhsType {
-			return "", fmt.Errorf("semantic: assignment type mismatch for %s at %s: want %s, got %s", node.Name, node.Pos, lhsType, rhsType)
+		if !target.isLValue || target.arrayLen > 0 {
+			return exprInfo{}, fmt.Errorf("semantic: assignment target at %s is not assignable", node.Pos)
 		}
-		return lhsType, nil
+		value, err := a.exprType(node.Value)
+		if err != nil {
+			return exprInfo{}, err
+		}
+		if !assignable(target.typ, value) {
+			return exprInfo{}, fmt.Errorf("semantic: assignment type mismatch at %s", node.Pos)
+		}
+		return exprInfo{typ: target.typ}, nil
 	case *ast.BinaryExpr:
-		leftType, err := a.exprType(node.Left)
+		left, err := a.exprType(node.Left)
 		if err != nil {
-			return "", err
+			return exprInfo{}, err
 		}
-		rightType, err := a.exprType(node.Right)
+		right, err := a.exprType(node.Right)
 		if err != nil {
-			return "", err
+			return exprInfo{}, err
 		}
-		if leftType != ast.TypeInt || rightType != ast.TypeInt {
-			return "", fmt.Errorf("semantic: binary op %s at %s needs int operands", node.Op, node.Pos)
+		switch node.Op {
+		case ast.BinaryAdd, ast.BinarySub, ast.BinaryMul, ast.BinaryDiv:
+			if !isNumericScalar(left) || !isNumericScalar(right) {
+				return exprInfo{}, fmt.Errorf("semantic: binary op %s at %s needs numeric operands", node.Op, node.Pos)
+			}
+			return exprInfo{typ: promotedNumericType(left.typ, right.typ)}, nil
+		case ast.BinaryMod:
+			if !isIntLikeScalar(left) || !isIntLikeScalar(right) {
+				return exprInfo{}, fmt.Errorf("semantic: binary op %% at %s needs int-like operands", node.Pos)
+			}
+			return exprInfo{typ: ast.TypeInt}, nil
+		case ast.BinaryLT, ast.BinaryLE, ast.BinaryGT, ast.BinaryGE, ast.BinaryEQ, ast.BinaryNE:
+			if !isNumericScalar(left) || !isNumericScalar(right) {
+				return exprInfo{}, fmt.Errorf("semantic: comparison at %s needs numeric operands", node.Pos)
+			}
+			return exprInfo{typ: ast.TypeInt}, nil
+		case ast.BinaryAnd, ast.BinaryOr:
+			if !isNumericScalar(left) || !isNumericScalar(right) {
+				return exprInfo{}, fmt.Errorf("semantic: logical op at %s needs numeric operands", node.Pos)
+			}
+			return exprInfo{typ: ast.TypeInt}, nil
+		default:
+			return exprInfo{}, fmt.Errorf("semantic: unsupported binary op %s at %s", node.Op, node.Pos)
 		}
-		return ast.TypeInt, nil
 	case *ast.UnaryExpr:
-		valueType, err := a.exprType(node.Value)
+		value, err := a.exprType(node.Value)
 		if err != nil {
-			return "", err
+			return exprInfo{}, err
 		}
-		if valueType != ast.TypeInt {
-			return "", fmt.Errorf("semantic: unary op %s at %s needs int operand", node.Op, node.Pos)
+		switch node.Op {
+		case ast.UnaryNeg:
+			if !isNumericScalar(value) {
+				return exprInfo{}, fmt.Errorf("semantic: unary - at %s needs numeric operand", node.Pos)
+			}
+			return exprInfo{typ: unaryNumericType(value.typ)}, nil
+		case ast.UnaryNot:
+			if !isNumericScalar(value) {
+				return exprInfo{}, fmt.Errorf("semantic: unary ! at %s needs numeric operand", node.Pos)
+			}
+			return exprInfo{typ: ast.TypeInt}, nil
+		default:
+			return exprInfo{}, fmt.Errorf("semantic: unsupported unary op %s at %s", node.Op, node.Pos)
 		}
-		return ast.TypeInt, nil
 	default:
-		return "", fmt.Errorf("semantic: unsupported expression %T", expr)
+		return exprInfo{}, fmt.Errorf("semantic: unsupported expression %T", expr)
 	}
 }
 
-func (a *analyzer) pushScope() {
-	a.scopes = append(a.scopes, scope{})
-}
+func (a *analyzer) pushScope() { a.scopes = append(a.scopes, scope{}) }
 
 func (a *analyzer) popScope() {
-	if len(a.scopes) == 0 {
-		return
+	if len(a.scopes) > 0 {
+		a.scopes = a.scopes[:len(a.scopes)-1]
 	}
-	a.scopes = a.scopes[:len(a.scopes)-1]
 }
 
-func (a *analyzer) declare(name string, typ ast.TypeName, pos interface{ String() string }) error {
+func (a *analyzer) declare(name string, sym symbol, pos interface{ String() string }) error {
 	current := a.scopes[len(a.scopes)-1]
 	if _, exists := current[name]; exists {
 		return fmt.Errorf("semantic: duplicate declaration of %q at %s", name, pos.String())
 	}
-	current[name] = typ
+	current[name] = sym
 	return nil
 }
 
-func (a *analyzer) lookup(name string) (ast.TypeName, bool) {
+func (a *analyzer) lookup(name string) (symbol, bool) {
 	for i := len(a.scopes) - 1; i >= 0; i-- {
-		if typ, ok := a.scopes[i][name]; ok {
-			return typ, true
+		if sym, ok := a.scopes[i][name]; ok {
+			return sym, true
 		}
 	}
-	return "", false
+	return symbol{}, false
+}
+
+func isSupportedType(typ ast.TypeName) bool {
+	return typ == ast.TypeInt || typ == ast.TypeChar || typ == ast.TypeFloat
+}
+
+func isNumericScalar(info exprInfo) bool {
+	return info.arrayLen == 0 && (info.typ == ast.TypeInt || info.typ == ast.TypeChar || info.typ == ast.TypeFloat)
+}
+
+func isIntLikeScalar(info exprInfo) bool {
+	return info.arrayLen == 0 && (info.typ == ast.TypeInt || info.typ == ast.TypeChar)
+}
+
+func promotedNumericType(left, right ast.TypeName) ast.TypeName {
+	if left == ast.TypeFloat || right == ast.TypeFloat {
+		return ast.TypeFloat
+	}
+	return ast.TypeInt
+}
+
+func unaryNumericType(typ ast.TypeName) ast.TypeName {
+	if typ == ast.TypeFloat {
+		return ast.TypeFloat
+	}
+	return ast.TypeInt
+}
+
+func assignable(target ast.TypeName, src exprInfo) bool {
+	if src.arrayLen > 0 {
+		return false
+	}
+	if target == src.typ {
+		return true
+	}
+	switch target {
+	case ast.TypeInt:
+		return src.typ == ast.TypeChar
+	case ast.TypeFloat:
+		return src.typ == ast.TypeInt || src.typ == ast.TypeChar
+	default:
+		return false
+	}
+}
+
+func paramAccepts(param paramSig, src exprInfo) bool {
+	if param.wantArray {
+		if src.arrayLen > 0 && src.typ == param.typ {
+			return true
+		}
+		return param.allowStringLiteral && src.isStringLiteral && src.typ == param.typ
+	}
+	return assignable(param.typ, src)
 }

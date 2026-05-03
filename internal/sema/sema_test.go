@@ -85,3 +85,53 @@ func TestAnalyzeAcceptsDefinedFunctionCall(t *testing.T) {
 		t.Fatalf("Analyze() error = %v", err)
 	}
 }
+
+func TestAnalyzeAcceptsStringAndArrayUsage(t *testing.T) {
+	tokens, err := lexer.Tokenize("int main() { char s[6] = \"hello\"; int a[2]; a[0] = 4; print_str(s); print_int(a[0]); return 0; }")
+	if err != nil {
+		t.Fatalf("Tokenize() error = %v", err)
+	}
+	program, err := parser.Parse(tokens)
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	if err := Analyze(program); err != nil {
+		t.Fatalf("Analyze() error = %v", err)
+	}
+}
+
+func TestAnalyzeRejectsFloatToIntInitializer(t *testing.T) {
+	tokens, err := lexer.Tokenize("int main() { int x = 2.5; return x; }")
+	if err != nil {
+		t.Fatalf("Tokenize() error = %v", err)
+	}
+	program, err := parser.Parse(tokens)
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	err = Analyze(program)
+	if err == nil {
+		t.Fatal("Analyze() error = nil, want non-nil")
+	}
+	if got, want := err.Error(), "semantic: initializer type mismatch for x at 1:14: want int"; got != want {
+		t.Fatalf("Analyze() error = %q, want %q", got, want)
+	}
+}
+
+func TestAnalyzeRejectsStringTooLong(t *testing.T) {
+	tokens, err := lexer.Tokenize("int main() { char s[4] = \"hello\"; return 0; }")
+	if err != nil {
+		t.Fatalf("Tokenize() error = %v", err)
+	}
+	program, err := parser.Parse(tokens)
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	err = Analyze(program)
+	if err == nil {
+		t.Fatal("Analyze() error = nil, want non-nil")
+	}
+	if got, want := err.Error(), "semantic: string initializer too long for s at 1:14"; got != want {
+		t.Fatalf("Analyze() error = %q, want %q", got, want)
+	}
+}

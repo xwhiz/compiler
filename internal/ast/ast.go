@@ -59,13 +59,8 @@ type FuncDecl struct {
 	Body       *BlockStmt
 }
 
-type Stmt interface {
-	stmtNode()
-}
-
-type Expr interface {
-	exprNode()
-}
+type Stmt interface{ stmtNode() }
+type Expr interface{ exprNode() }
 
 type BlockStmt struct {
 	Pos   token.Position
@@ -75,10 +70,11 @@ type BlockStmt struct {
 func (*BlockStmt) stmtNode() {}
 
 type VarDeclStmt struct {
-	Pos  token.Position
-	Type TypeName
-	Name string
-	Init Expr
+	Pos      token.Position
+	Type     TypeName
+	Name     string
+	ArrayLen int
+	Init     Expr
 }
 
 func (*VarDeclStmt) stmtNode() {}
@@ -121,12 +117,41 @@ type IntLiteral struct {
 
 func (*IntLiteral) exprNode() {}
 
+type FloatLiteral struct {
+	Pos    token.Position
+	Lexeme string
+}
+
+func (*FloatLiteral) exprNode() {}
+
+type CharLiteral struct {
+	Pos    token.Position
+	Lexeme string
+}
+
+func (*CharLiteral) exprNode() {}
+
+type StringLiteral struct {
+	Pos    token.Position
+	Lexeme string
+}
+
+func (*StringLiteral) exprNode() {}
+
 type IdentExpr struct {
 	Pos  token.Position
 	Name string
 }
 
 func (*IdentExpr) exprNode() {}
+
+type IndexExpr struct {
+	Pos   token.Position
+	Name  string
+	Index Expr
+}
+
+func (*IndexExpr) exprNode() {}
 
 type CallExpr struct {
 	Pos    token.Position
@@ -137,9 +162,9 @@ type CallExpr struct {
 func (*CallExpr) exprNode() {}
 
 type AssignExpr struct {
-	Pos   token.Position
-	Name  string
-	Value Expr
+	Pos    token.Position
+	Target Expr
+	Value  Expr
 }
 
 func (*AssignExpr) exprNode() {}
@@ -196,7 +221,11 @@ func writeStmt(b *strings.Builder, level int, stmt Stmt) {
 	case *BlockStmt:
 		writeBlock(b, level, node)
 	case *VarDeclStmt:
-		writeLine(b, level, fmt.Sprintf("VarDeclStmt name=%s type=%s", node.Name, node.Type))
+		if node.ArrayLen > 0 {
+			writeLine(b, level, fmt.Sprintf("VarDeclStmt name=%s type=%s array=%d", node.Name, node.Type, node.ArrayLen))
+		} else {
+			writeLine(b, level, fmt.Sprintf("VarDeclStmt name=%s type=%s", node.Name, node.Type))
+		}
 		if node.Init != nil {
 			writeLine(b, level+1, "Init")
 			writeExpr(b, level+2, node.Init)
@@ -236,16 +265,28 @@ func writeExpr(b *strings.Builder, level int, expr Expr) {
 	switch node := expr.(type) {
 	case *IntLiteral:
 		writeLine(b, level, fmt.Sprintf("IntLiteral value=%s", node.Lexeme))
+	case *FloatLiteral:
+		writeLine(b, level, fmt.Sprintf("FloatLiteral value=%s", node.Lexeme))
+	case *CharLiteral:
+		writeLine(b, level, fmt.Sprintf("CharLiteral value=%s", node.Lexeme))
+	case *StringLiteral:
+		writeLine(b, level, fmt.Sprintf("StringLiteral value=%s", node.Lexeme))
 	case *IdentExpr:
 		writeLine(b, level, fmt.Sprintf("IdentExpr name=%s", node.Name))
+	case *IndexExpr:
+		writeLine(b, level, fmt.Sprintf("IndexExpr name=%s", node.Name))
+		writeExpr(b, level+1, node.Index)
 	case *CallExpr:
 		writeLine(b, level, fmt.Sprintf("CallExpr callee=%s", node.Callee))
 		for _, arg := range node.Args {
 			writeExpr(b, level+1, arg)
 		}
 	case *AssignExpr:
-		writeLine(b, level, fmt.Sprintf("AssignExpr name=%s", node.Name))
-		writeExpr(b, level+1, node.Value)
+		writeLine(b, level, "AssignExpr")
+		writeLine(b, level+1, "Target")
+		writeExpr(b, level+2, node.Target)
+		writeLine(b, level+1, "Value")
+		writeExpr(b, level+2, node.Value)
 	case *BinaryExpr:
 		writeLine(b, level, fmt.Sprintf("BinaryExpr op=%q", string(node.Op)))
 		writeExpr(b, level+1, node.Left)

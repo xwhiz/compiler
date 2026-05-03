@@ -7,8 +7,11 @@ type Type string
 const (
 	EOF Type = "EOF"
 
-	Identifier Type = "IDENT"
-	IntLiteral Type = "INT_LIT"
+	Identifier    Type = "IDENT"
+	IntLiteral    Type = "INT_LIT"
+	FloatLiteral  Type = "FLOAT_LIT"
+	CharLiteral   Type = "CHAR_LIT"
+	StringLiteral Type = "STRING_LIT"
 
 	KeywordInt    Type = "KW_INT"
 	KeywordChar   Type = "KW_CHAR"
@@ -61,7 +64,7 @@ type Token struct {
 }
 
 func (t Token) String() string {
-	return fmt.Sprintf("%d:%d %-10s %q", t.Pos.Line, t.Pos.Column, t.Type, t.Lexeme)
+	return fmt.Sprintf("%d:%d %-12s %q", t.Pos.Line, t.Pos.Column, t.Type, t.Lexeme)
 }
 
 var Keywords = map[string]Type{

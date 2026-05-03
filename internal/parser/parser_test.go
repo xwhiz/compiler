@@ -174,3 +174,41 @@ func TestParseFunctionParams(t *testing.T) {
 		t.Fatalf("param names = %q, %q; want a, b", add.Params[0].Name, add.Params[1].Name)
 	}
 }
+
+func TestParseArrayStringAndFloat(t *testing.T) {
+	source := "float twice(float x) { return x + x; } int main() { char s[6] = \"hello\"; int a[3]; a[0] = 4; return 0; }"
+	tokens, err := lexer.Tokenize(source)
+	if err != nil {
+		t.Fatalf("Tokenize() error = %v", err)
+	}
+
+	program, err := Parse(tokens)
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	if len(program.Functions) != 2 {
+		t.Fatalf("len(program.Functions) = %d, want 2", len(program.Functions))
+	}
+	mainFn := program.Functions[1]
+	decl, ok := mainFn.Body.Stmts[0].(*ast.VarDeclStmt)
+	if !ok {
+		t.Fatalf("stmt type = %T, want *ast.VarDeclStmt", mainFn.Body.Stmts[0])
+	}
+	if decl.ArrayLen != 6 || decl.Type != ast.TypeChar {
+		t.Fatalf("decl = %#v, want char[6]", decl)
+	}
+	if _, ok := decl.Init.(*ast.StringLiteral); !ok {
+		t.Fatalf("decl.Init type = %T, want *ast.StringLiteral", decl.Init)
+	}
+	assignStmt, ok := mainFn.Body.Stmts[2].(*ast.ExprStmt)
+	if !ok {
+		t.Fatalf("stmt type = %T, want *ast.ExprStmt", mainFn.Body.Stmts[2])
+	}
+	assign, ok := assignStmt.Expr.(*ast.AssignExpr)
+	if !ok {
+		t.Fatalf("expr type = %T, want *ast.AssignExpr", assignStmt.Expr)
+	}
+	if _, ok := assign.Target.(*ast.IndexExpr); !ok {
+		t.Fatalf("assign target type = %T, want *ast.IndexExpr", assign.Target)
+	}
+}

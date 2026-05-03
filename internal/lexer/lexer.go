@@ -14,22 +14,16 @@ type Lexer struct {
 }
 
 func Tokenize(input string) ([]token.Token, error) {
-	lx := &Lexer{
-		input:  input,
-		line:   1,
-		column: 1,
-	}
+	lx := &Lexer{input: input, line: 1, column: 1}
 
 	var tokens []token.Token
 	for {
-		if err := lx.skipIgnored(); err != nil {
-			return nil, err
-		}
+		lx.skipIgnored()
 
 		pos := lx.position()
 		ch, ok := lx.peek()
 		if !ok {
-			tokens = append(tokens, token.Token{Type: token.EOF, Lexeme: "", Pos: pos})
+			tokens = append(tokens, token.Token{Type: token.EOF, Pos: pos})
 			return tokens, nil
 		}
 
@@ -37,7 +31,23 @@ func Tokenize(input string) ([]token.Token, error) {
 		case isIdentStart(ch):
 			tokens = append(tokens, lx.scanIdentifier())
 		case isDigit(ch):
-			tokens = append(tokens, lx.scanIntLiteral())
+			tok, err := lx.scanNumber()
+			if err != nil {
+				return nil, err
+			}
+			tokens = append(tokens, tok)
+		case ch == '\'':
+			tok, err := lx.scanCharLiteral()
+			if err != nil {
+				return nil, err
+			}
+			tokens = append(tokens, tok)
+		case ch == '"':
+			tok, err := lx.scanStringLiteral()
+			if err != nil {
+				return nil, err
+			}
+			tokens = append(tokens, tok)
 		default:
 			tok, err := lx.scanPunctuationOrOperator()
 			if err != nil {
@@ -48,11 +58,11 @@ func Tokenize(input string) ([]token.Token, error) {
 	}
 }
 
-func (lx *Lexer) skipIgnored() error {
+func (lx *Lexer) skipIgnored() {
 	for {
 		ch, ok := lx.peek()
 		if !ok {
-			return nil
+			return
 		}
 
 		switch ch {
@@ -61,9 +71,8 @@ func (lx *Lexer) skipIgnored() error {
 		case '/':
 			next, ok := lx.peekNext()
 			if !ok || next != '/' {
-				return nil
+				return
 			}
-
 			lx.advance()
 			lx.advance()
 			for {
@@ -74,7 +83,7 @@ func (lx *Lexer) skipIgnored() error {
 				lx.advance()
 			}
 		default:
-			return nil
+			return
 		}
 	}
 }
@@ -89,17 +98,15 @@ func (lx *Lexer) scanIdentifier() token.Token {
 		}
 		lx.advance()
 	}
-
 	lexeme := lx.input[start:lx.index]
-	typeName := token.Identifier
+	typ := token.Identifier
 	if keywordType, ok := token.Keywords[lexeme]; ok {
-		typeName = keywordType
+		typ = keywordType
 	}
-
-	return token.Token{Type: typeName, Lexeme: lexeme, Pos: pos}
+	return token.Token{Type: typ, Lexeme: lexeme, Pos: pos}
 }
 
-func (lx *Lexer) scanIntLiteral() token.Token {
+func (lx *Lexer) scanNumber() (token.Token, error) {
 	pos := lx.position()
 	start := lx.index
 	for {
@@ -110,7 +117,55 @@ func (lx *Lexer) scanIntLiteral() token.Token {
 		lx.advance()
 	}
 
-	return token.Token{Type: token.IntLiteral, Lexeme: lx.input[start:lx.index], Pos: pos}
+	if ch, ok := lx.peek(); ok && ch == '.' {
+		next, ok := lx.peekNext()
+		if ok && isDigit(next) {
+			lx.advance()
+			for {
+				ch, ok := lx.peek()
+				if !ok || !isDigit(ch) {
+					break
+				}
+				lx.advance()
+			}
+			return token.Token{Type: token.FloatLiteral, Lexeme: lx.input[start:lx.index], Pos: pos}, nil
+		}
+	}
+
+	return token.Token{Type: token.IntLiteral, Lexeme: lx.input[start:lx.index], Pos: pos}, nil
+}
+
+func (lx *Lexer) scanCharLiteral() (token.Token, error) {
+	pos := lx.position()
+	start := lx.index
+	lx.advance()
+	ch, ok := lx.peek()
+	if !ok || ch == '\n' || ch == '\'' {
+		return token.Token{}, lx.errorf(pos, "invalid char literal")
+	}
+	lx.advance()
+	if !lx.match('\'') {
+		return token.Token{}, lx.errorf(pos, "unterminated char literal")
+	}
+	return token.Token{Type: token.CharLiteral, Lexeme: lx.input[start:lx.index], Pos: pos}, nil
+}
+
+func (lx *Lexer) scanStringLiteral() (token.Token, error) {
+	pos := lx.position()
+	start := lx.index
+	lx.advance()
+	for {
+		ch, ok := lx.peek()
+		if !ok || ch == '\n' {
+			return token.Token{}, lx.errorf(pos, "unterminated string literal")
+		}
+		if ch == '"' {
+			lx.advance()
+			break
+		}
+		lx.advance()
+	}
+	return token.Token{Type: token.StringLiteral, Lexeme: lx.input[start:lx.index], Pos: pos}, nil
 }
 
 func (lx *Lexer) scanPunctuationOrOperator() (token.Token, error) {
@@ -201,11 +256,8 @@ func (lx *Lexer) match(want byte) bool {
 	if !ok || ch != want {
 		return false
 	}
-	if ch == want {
-		lx.advance()
-		return true
-	}
-	return false
+	lx.advance()
+	return true
 }
 
 func (lx *Lexer) peek() (byte, bool) {
@@ -227,7 +279,6 @@ func (lx *Lexer) advance() {
 	if lx.index >= len(lx.input) {
 		return
 	}
-
 	ch := lx.input[lx.index]
 	lx.index++
 	if ch == '\n' {

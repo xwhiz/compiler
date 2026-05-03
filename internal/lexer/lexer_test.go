@@ -48,3 +48,38 @@ func TestTokenizeRejectsUnexpectedCharacter(t *testing.T) {
 		t.Fatalf("Tokenize() error = %q, want %q", err.Error(), "1:1: unexpected character '@'")
 	}
 }
+
+func TestTokenizeFloatCharAndStringLiterals(t *testing.T) {
+	source := "float x = 2.5; char c = 'A'; print_str(\"hi\");"
+	tokens, err := Tokenize(source)
+	if err != nil {
+		t.Fatalf("Tokenize() error = %v", err)
+	}
+
+	wantTypes := []token.Type{
+		token.KeywordFloat, token.Identifier, token.Assign, token.FloatLiteral, token.Semicolon,
+		token.KeywordChar, token.Identifier, token.Assign, token.CharLiteral, token.Semicolon,
+		token.Identifier, token.LParen, token.StringLiteral, token.RParen, token.Semicolon, token.EOF,
+	}
+	if len(tokens) != len(wantTypes) {
+		t.Fatalf("len(tokens) = %d, want %d", len(tokens), len(wantTypes))
+	}
+	for i, want := range wantTypes {
+		if tokens[i].Type != want {
+			t.Fatalf("token %d type = %s, want %s", i, tokens[i].Type, want)
+		}
+	}
+	if tokens[3].Lexeme != "2.5" || tokens[8].Lexeme != "'A'" || tokens[12].Lexeme != "\"hi\"" {
+		t.Fatalf("literal lexemes = %q %q %q", tokens[3].Lexeme, tokens[8].Lexeme, tokens[12].Lexeme)
+	}
+}
+
+func TestTokenizeRejectsUnterminatedString(t *testing.T) {
+	_, err := Tokenize("\"oops")
+	if err == nil {
+		t.Fatal("Tokenize() error = nil, want non-nil")
+	}
+	if err.Error() != "1:1: unterminated string literal" {
+		t.Fatalf("Tokenize() error = %q, want %q", err.Error(), "1:1: unterminated string literal")
+	}
+}
