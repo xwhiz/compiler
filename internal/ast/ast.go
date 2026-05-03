@@ -24,12 +24,21 @@ const (
 	BinaryMul BinaryOp = "*"
 	BinaryDiv BinaryOp = "/"
 	BinaryMod BinaryOp = "%"
+	BinaryLT  BinaryOp = "<"
+	BinaryLE  BinaryOp = "<="
+	BinaryGT  BinaryOp = ">"
+	BinaryGE  BinaryOp = ">="
+	BinaryEQ  BinaryOp = "=="
+	BinaryNE  BinaryOp = "!="
+	BinaryAnd BinaryOp = "&&"
+	BinaryOr  BinaryOp = "||"
 )
 
 type UnaryOp string
 
 const (
 	UnaryNeg UnaryOp = "-"
+	UnaryNot UnaryOp = "!"
 )
 
 type Program struct {
@@ -66,6 +75,23 @@ type VarDeclStmt struct {
 }
 
 func (*VarDeclStmt) stmtNode() {}
+
+type IfStmt struct {
+	Pos  token.Position
+	Cond Expr
+	Then Stmt
+	Else Stmt
+}
+
+func (*IfStmt) stmtNode() {}
+
+type WhileStmt struct {
+	Pos  token.Position
+	Cond Expr
+	Body Stmt
+}
+
+func (*WhileStmt) stmtNode() {}
 
 type ReturnStmt struct {
 	Pos   token.Position
@@ -168,6 +194,22 @@ func writeStmt(b *strings.Builder, level int, stmt Stmt) {
 			return
 		}
 		writeExpr(b, level+1, node.Value)
+	case *IfStmt:
+		writeLine(b, level, "IfStmt")
+		writeLine(b, level+1, "Cond")
+		writeExpr(b, level+2, node.Cond)
+		writeLine(b, level+1, "Then")
+		writeStmt(b, level+2, node.Then)
+		if node.Else != nil {
+			writeLine(b, level+1, "Else")
+			writeStmt(b, level+2, node.Else)
+		}
+	case *WhileStmt:
+		writeLine(b, level, "WhileStmt")
+		writeLine(b, level+1, "Cond")
+		writeExpr(b, level+2, node.Cond)
+		writeLine(b, level+1, "Body")
+		writeStmt(b, level+2, node.Body)
 	case *ExprStmt:
 		writeLine(b, level, "ExprStmt")
 		writeExpr(b, level+1, node.Expr)
@@ -191,11 +233,11 @@ func writeExpr(b *strings.Builder, level int, expr Expr) {
 		writeLine(b, level, fmt.Sprintf("AssignExpr name=%s", node.Name))
 		writeExpr(b, level+1, node.Value)
 	case *BinaryExpr:
-		writeLine(b, level, fmt.Sprintf("BinaryExpr op=%s", node.Op))
+		writeLine(b, level, fmt.Sprintf("BinaryExpr op=%q", string(node.Op)))
 		writeExpr(b, level+1, node.Left)
 		writeExpr(b, level+1, node.Right)
 	case *UnaryExpr:
-		writeLine(b, level, fmt.Sprintf("UnaryExpr op=%s", node.Op))
+		writeLine(b, level, fmt.Sprintf("UnaryExpr op=%q", string(node.Op)))
 		writeExpr(b, level+1, node.Value)
 	default:
 		writeLine(b, level, fmt.Sprintf("<unknown expr %T>", expr))

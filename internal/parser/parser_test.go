@@ -129,3 +129,24 @@ func TestParseLocalDeclAndArithmetic(t *testing.T) {
 		t.Fatalf("ret.Value type = %T, want *ast.BinaryExpr", ret.Value)
 	}
 }
+
+func TestParseIfWhile(t *testing.T) {
+	source := "int main() { int i = 0; while (i < 3) { if (i == 1) print_int(i); i = i + 1; } return i; }"
+	tokens, err := lexer.Tokenize(source)
+	if err != nil {
+		t.Fatalf("Tokenize() error = %v", err)
+	}
+
+	program, err := Parse(tokens)
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+
+	stmts := program.Functions[0].Body.Stmts
+	if len(stmts) < 2 {
+		t.Fatalf("len(stmts) = %d, want at least 2", len(stmts))
+	}
+	if _, ok := stmts[1].(*ast.WhileStmt); !ok {
+		t.Fatalf("stmt type = %T, want *ast.WhileStmt", stmts[1])
+	}
+}

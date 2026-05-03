@@ -146,11 +146,67 @@ func (p *Parser) parseStmt() (ast.Stmt, error) {
 	switch p.peek().Type {
 	case token.LBrace:
 		return p.parseBlockStmt()
+	case token.KeywordIf:
+		return p.parseIfStmt()
+	case token.KeywordWhile:
+		return p.parseWhileStmt()
 	case token.KeywordReturn:
 		return p.parseReturnStmt()
 	default:
 		return p.parseExprStmt()
 	}
+}
+
+func (p *Parser) parseIfStmt() (ast.Stmt, error) {
+	ifTok, err := p.consume(token.KeywordIf, "expected 'if'")
+	if err != nil {
+		return nil, err
+	}
+	if _, err := p.consume(token.LParen, "expected '(' after if"); err != nil {
+		return nil, err
+	}
+	cond, err := p.parseExpr()
+	if err != nil {
+		return nil, err
+	}
+	if _, err := p.consume(token.RParen, "expected ')' after if condition"); err != nil {
+		return nil, err
+	}
+	thenStmt, err := p.parseStmt()
+	if err != nil {
+		return nil, err
+	}
+	stmt := &ast.IfStmt{Pos: ifTok.Pos, Cond: cond, Then: thenStmt}
+	if p.match(token.KeywordElse) {
+		elseStmt, err := p.parseStmt()
+		if err != nil {
+			return nil, err
+		}
+		stmt.Else = elseStmt
+	}
+	return stmt, nil
+}
+
+func (p *Parser) parseWhileStmt() (ast.Stmt, error) {
+	whileTok, err := p.consume(token.KeywordWhile, "expected 'while'")
+	if err != nil {
+		return nil, err
+	}
+	if _, err := p.consume(token.LParen, "expected '(' after while"); err != nil {
+		return nil, err
+	}
+	cond, err := p.parseExpr()
+	if err != nil {
+		return nil, err
+	}
+	if _, err := p.consume(token.RParen, "expected ')' after while condition"); err != nil {
+		return nil, err
+	}
+	body, err := p.parseStmt()
+	if err != nil {
+		return nil, err
+	}
+	return &ast.WhileStmt{Pos: whileTok.Pos, Cond: cond, Body: body}, nil
 }
 
 func (p *Parser) parseReturnStmt() (ast.Stmt, error) {
@@ -193,7 +249,7 @@ func (p *Parser) parseExpr() (ast.Expr, error) {
 }
 
 func (p *Parser) parseAssignment() (ast.Expr, error) {
-	left, err := p.parseAdditive()
+	left, err := p.parseLogicalOr()
 	if err != nil {
 		return nil, err
 	}
@@ -213,6 +269,92 @@ func (p *Parser) parseAssignment() (ast.Expr, error) {
 	}
 
 	return &ast.AssignExpr{Pos: ident.Pos, Name: ident.Name, Value: right}, nil
+}
+
+func (p *Parser) parseLogicalOr() (ast.Expr, error) {
+	left, err := p.parseLogicalAnd()
+	if err != nil {
+		return nil, err
+	}
+	for p.match(token.OrOr) {
+		tok := p.previous()
+		right, err := p.parseLogicalAnd()
+		if err != nil {
+			return nil, err
+		}
+		left = &ast.BinaryExpr{Pos: tok.Pos, Op: ast.BinaryOr, Left: left, Right: right}
+	}
+	return left, nil
+}
+
+func (p *Parser) parseLogicalAnd() (ast.Expr, error) {
+	left, err := p.parseEquality()
+	if err != nil {
+		return nil, err
+	}
+	for p.match(token.AndAnd) {
+		tok := p.previous()
+		right, err := p.parseEquality()
+		if err != nil {
+			return nil, err
+		}
+		left = &ast.BinaryExpr{Pos: tok.Pos, Op: ast.BinaryAnd, Left: left, Right: right}
+	}
+	return left, nil
+}
+
+func (p *Parser) parseEquality() (ast.Expr, error) {
+	left, err := p.parseRelational()
+	if err != nil {
+		return nil, err
+	}
+	for {
+		tok := p.peek()
+		var op ast.BinaryOp
+		switch tok.Type {
+		case token.Equal:
+			op = ast.BinaryEQ
+		case token.NotEqual:
+			op = ast.BinaryNE
+		default:
+			return left, nil
+		}
+		p.advance()
+		right, err := p.parseRelational()
+		if err != nil {
+			return nil, err
+		}
+		left = &ast.BinaryExpr{Pos: tok.Pos, Op: op, Left: left, Right: right}
+	}
+}
+
+func (p *Parser) parseRelational() (ast.Expr, error) {
+	left, err := p.parseAdditive()
+	if err != nil {
+		return nil, err
+	}
+	for {
+		tok := p.peek()
+		var op ast.BinaryOp
+		switch tok.Type {
+		case token.Less:
+			op = ast.BinaryLT
+		case token.LessEq:
+			op = ast.BinaryLE
+		case token.Greater:
+			op = ast.BinaryGT
+		case token.GreaterEq:
+			op = ast.BinaryGE
+		default:
+			return left, nil
+		}
+		p.advance()
+		right, err := p.parseAdditive()
+		if err != nil {
+			return nil, err
+		}
+		left = &ast.BinaryExpr{Pos: tok.Pos, Op: op, Left: left, Right: right}
+	}
 }
 
 func (p *Parser) parseAdditive() (ast.Expr, error) {
@@ -279,6 +421,14 @@ func (p *Parser) parseUnary() (ast.Expr, error) {
 			return nil, err
 		}
 		return &ast.UnaryExpr{Pos: pos, Op: ast.UnaryNeg, Value: value}, nil
+	}
+	if p.match(token.Not) {
+		pos := p.previous().Pos
+		value, err := p.parseUnary()
+		if err != nil {
+			return nil, err
+		}
+		return &ast.UnaryExpr{Pos: pos, Op: ast.UnaryNot, Value: value}, nil
 	}
 
 	return p.parsePrimary()

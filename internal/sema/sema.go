@@ -89,6 +89,32 @@ func (a *analyzer) analyzeStmt(stmt ast.Stmt, returnType ast.TypeName) error {
 			return fmt.Errorf("semantic: initializer type mismatch for %s at %s: want %s, got %s", node.Name, node.Pos, node.Type, initType)
 		}
 		return nil
+	case *ast.IfStmt:
+		condType, err := a.exprType(node.Cond)
+		if err != nil {
+			return err
+		}
+		if condType != ast.TypeInt {
+			return fmt.Errorf("semantic: if condition at %s must be int", node.Pos)
+		}
+		if err := a.analyzeStmt(node.Then, returnType); err != nil {
+			return err
+		}
+		if node.Else != nil {
+			if err := a.analyzeStmt(node.Else, returnType); err != nil {
+				return err
+			}
+		}
+		return nil
+	case *ast.WhileStmt:
+		condType, err := a.exprType(node.Cond)
+		if err != nil {
+			return err
+		}
+		if condType != ast.TypeInt {
+			return fmt.Errorf("semantic: while condition at %s must be int", node.Pos)
+		}
+		return a.analyzeStmt(node.Body, returnType)
 	case *ast.ReturnStmt:
 		if returnType == ast.TypeVoid {
 			if node.Value != nil {
