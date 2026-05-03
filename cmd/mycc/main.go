@@ -1,8 +1,8 @@
 package main
 
 import (
-	"os"
 	"github.com/xwhiz/compiler/internal/driver"
+	"os"
 )
 
 func main() {

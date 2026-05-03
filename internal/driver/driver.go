@@ -7,6 +7,10 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/xwhiz/compiler/internal/ast"
+	"github.com/xwhiz/compiler/internal/lexer"
+	"github.com/xwhiz/compiler/internal/parser"
 )
 
 type mode string
@@ -127,9 +131,9 @@ func dispatch(opts options, source []byte, stdout io.Writer) error {
 
 	switch opts.mode {
 	case modeTokens:
-		message = "lexer output"
+		return printTokens(source, stdout)
 	case modeAST:
-		message = "parser output"
+		return printAST(source, stdout)
 	case modeSema:
 		message = "semantic analysis output"
 	case modeIR:
@@ -146,8 +150,38 @@ func dispatch(opts options, source []byte, stdout io.Writer) error {
 	return err
 }
 
+func printTokens(source []byte, stdout io.Writer) error {
+	tokens, err := lexer.Tokenize(string(source))
+	if err != nil {
+		return fmt.Errorf("lex: %w", err)
+	}
+
+	for _, tok := range tokens {
+		if _, err := fmt.Fprintln(stdout, tok.String()); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func printAST(source []byte, stdout io.Writer) error {
+	tokens, err := lexer.Tokenize(string(source))
+	if err != nil {
+		return fmt.Errorf("lex: %w", err)
+	}
+
+	program, err := parser.Parse(tokens)
+	if err != nil {
+		return fmt.Errorf("parse: %w", err)
+	}
+
+	_, err = io.WriteString(stdout, ast.FormatProgram(program))
+	return err
+}
+
 func printUsage(w io.Writer) {
-	_, _ = fmt.Fprintf(w, strings.TrimSpace(`Usage: mycc [phase flag] <file>
+	_, _ = io.WriteString(w, strings.TrimSpace(`Usage: mycc [phase flag] <file>
 
 Phase flags:
   --tokens    print lexer output
