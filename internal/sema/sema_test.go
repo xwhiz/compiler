@@ -86,6 +86,56 @@ func TestAnalyzeAcceptsDefinedFunctionCall(t *testing.T) {
 	}
 }
 
+func TestAnalyzeAcceptsGlobalShadowing(t *testing.T) {
+	tokens, err := lexer.Tokenize("int g = 10; int main() { int g = 3; return g; }")
+	if err != nil {
+		t.Fatalf("Tokenize() error = %v", err)
+	}
+	program, err := parser.Parse(tokens)
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	if err := Analyze(program); err != nil {
+		t.Fatalf("Analyze() error = %v", err)
+	}
+}
+
+func TestAnalyzeRejectsDuplicateGlobal(t *testing.T) {
+	tokens, err := lexer.Tokenize("int g = 1; int g = 2; int main() { return g; }")
+	if err != nil {
+		t.Fatalf("Tokenize() error = %v", err)
+	}
+	program, err := parser.Parse(tokens)
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	err = Analyze(program)
+	if err == nil {
+		t.Fatal("Analyze() error = nil, want non-nil")
+	}
+	if got, want := err.Error(), "semantic: duplicate global \"g\" at 1:12"; got != want {
+		t.Fatalf("Analyze() error = %q, want %q", got, want)
+	}
+}
+
+func TestAnalyzeRejectsGlobalFunctionCollision(t *testing.T) {
+	tokens, err := lexer.Tokenize("int g = 1; int g() { return 0; }")
+	if err != nil {
+		t.Fatalf("Tokenize() error = %v", err)
+	}
+	program, err := parser.Parse(tokens)
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	err = Analyze(program)
+	if err == nil {
+		t.Fatal("Analyze() error = nil, want non-nil")
+	}
+	if got, want := err.Error(), "semantic: function \"g\" conflicts with global at 1:12"; got != want {
+		t.Fatalf("Analyze() error = %q, want %q", got, want)
+	}
+}
+
 func TestAnalyzeAcceptsStringAndArrayUsage(t *testing.T) {
 	tokens, err := lexer.Tokenize("int main() { char s[6] = \"hello\"; int a[2]; a[0] = 4; print_str(s); print_int(a[0]); return 0; }")
 	if err != nil {

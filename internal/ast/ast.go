@@ -41,7 +41,13 @@ const (
 	UnaryNot UnaryOp = "!"
 )
 
+type Decl interface{ declNode() }
+type Stmt interface{ stmtNode() }
+type Expr interface{ exprNode() }
+
 type Program struct {
+	Decls     []Decl
+	Globals   []*VarDecl
 	Functions []*FuncDecl
 }
 
@@ -59,8 +65,7 @@ type FuncDecl struct {
 	Body       *BlockStmt
 }
 
-type Stmt interface{ stmtNode() }
-type Expr interface{ exprNode() }
+func (*FuncDecl) declNode() {}
 
 type BlockStmt struct {
 	Pos   token.Position
@@ -69,7 +74,7 @@ type BlockStmt struct {
 
 func (*BlockStmt) stmtNode() {}
 
-type VarDeclStmt struct {
+type VarDecl struct {
 	Pos      token.Position
 	Type     TypeName
 	Name     string
@@ -77,7 +82,8 @@ type VarDeclStmt struct {
 	Init     Expr
 }
 
-func (*VarDeclStmt) stmtNode() {}
+func (*VarDecl) declNode() {}
+func (*VarDecl) stmtNode() {}
 
 type IfStmt struct {
 	Pos  token.Position
@@ -189,10 +195,21 @@ func (*UnaryExpr) exprNode() {}
 func FormatProgram(program *Program) string {
 	var b strings.Builder
 	writeLine(&b, 0, "Program")
-	for _, fn := range program.Functions {
-		writeFunc(&b, 1, fn)
+	for _, decl := range program.Decls {
+		writeDecl(&b, 1, decl)
 	}
 	return b.String()
+}
+
+func writeDecl(b *strings.Builder, level int, decl Decl) {
+	switch node := decl.(type) {
+	case *FuncDecl:
+		writeFunc(b, level, node)
+	case *VarDecl:
+		writeVarDecl(b, level, node, "GlobalVarDecl")
+	default:
+		writeLine(b, level, fmt.Sprintf("<unknown decl %T>", decl))
+	}
 }
 
 func writeFunc(b *strings.Builder, level int, fn *FuncDecl) {
@@ -220,16 +237,8 @@ func writeStmt(b *strings.Builder, level int, stmt Stmt) {
 	switch node := stmt.(type) {
 	case *BlockStmt:
 		writeBlock(b, level, node)
-	case *VarDeclStmt:
-		if node.ArrayLen > 0 {
-			writeLine(b, level, fmt.Sprintf("VarDeclStmt name=%s type=%s array=%d", node.Name, node.Type, node.ArrayLen))
-		} else {
-			writeLine(b, level, fmt.Sprintf("VarDeclStmt name=%s type=%s", node.Name, node.Type))
-		}
-		if node.Init != nil {
-			writeLine(b, level+1, "Init")
-			writeExpr(b, level+2, node.Init)
-		}
+	case *VarDecl:
+		writeVarDecl(b, level, node, "VarDeclStmt")
 	case *ReturnStmt:
 		writeLine(b, level, "ReturnStmt")
 		if node.Value == nil {
@@ -258,6 +267,18 @@ func writeStmt(b *strings.Builder, level int, stmt Stmt) {
 		writeExpr(b, level+1, node.Expr)
 	default:
 		writeLine(b, level, fmt.Sprintf("<unknown stmt %T>", stmt))
+	}
+}
+
+func writeVarDecl(b *strings.Builder, level int, node *VarDecl, label string) {
+	if node.ArrayLen > 0 {
+		writeLine(b, level, fmt.Sprintf("%s name=%s type=%s array=%d", label, node.Name, node.Type, node.ArrayLen))
+	} else {
+		writeLine(b, level, fmt.Sprintf("%s name=%s type=%s", label, node.Name, node.Type))
+	}
+	if node.Init != nil {
+		writeLine(b, level+1, "Init")
+		writeExpr(b, level+2, node.Init)
 	}
 }
 

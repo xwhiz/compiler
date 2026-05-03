@@ -2,6 +2,7 @@ package sema
 
 import (
 	"fmt"
+	"maps"
 
 	"github.com/xwhiz/compiler/internal/ast"
 )
@@ -33,8 +34,9 @@ type exprInfo struct {
 }
 
 type analyzer struct {
-	scopes []scope
-	funcs  map[string]funcSig
+	globals map[string]symbol
+	scopes  []scope
+	funcs   map[string]funcSig
 }
 
 var builtins = map[string]funcSig{
@@ -46,27 +48,73 @@ var builtins = map[string]funcSig{
 }
 
 func Analyze(program *ast.Program) error {
-	if len(program.Functions) == 0 {
-		return fmt.Errorf("semantic: missing function definitions")
+	if len(program.Decls) == 0 {
+		return fmt.Errorf("semantic: missing top-level declarations")
 	}
-	a := &analyzer{funcs: map[string]funcSig{}}
-	for name, sig := range builtins {
-		a.funcs[name] = sig
-	}
+	a := &analyzer{globals: map[string]symbol{}, funcs: map[string]funcSig{}}
+	maps.Copy(a.funcs, builtins)
 	hasMain := false
-	for _, fn := range program.Functions {
-		if fn.Name == "main" {
-			hasMain = true
-		}
-		if err := a.registerFunc(fn); err != nil {
-			return err
-		}
-		if err := a.analyzeFunc(fn); err != nil {
-			return err
+	for _, decl := range program.Decls {
+		switch node := decl.(type) {
+		case *ast.VarDecl:
+			if err := a.analyzeGlobalDecl(node); err != nil {
+				return err
+			}
+		case *ast.FuncDecl:
+			if node.Name == "main" {
+				hasMain = true
+			}
+			if err := a.registerFunc(node); err != nil {
+				return err
+			}
+			if err := a.analyzeFunc(node); err != nil {
+				return err
+			}
+		default:
+			return fmt.Errorf("semantic: unsupported top-level declaration %T", decl)
 		}
 	}
 	if !hasMain {
 		return fmt.Errorf("semantic: missing main function")
+	}
+	return nil
+}
+
+func (a *analyzer) analyzeGlobalDecl(node *ast.VarDecl) error {
+	if node.Type == ast.TypeVoid {
+		return fmt.Errorf("semantic: variable %q cannot have type void at %s", node.Name, node.Pos)
+	}
+	if !isSupportedType(node.Type) {
+		return fmt.Errorf("semantic: global type %s not supported at %s", node.Type, node.Pos)
+	}
+	if node.ArrayLen < 0 {
+		return fmt.Errorf("semantic: invalid array length for %q at %s", node.Name, node.Pos)
+	}
+	if _, exists := a.globals[node.Name]; exists {
+		return fmt.Errorf("semantic: duplicate global %q at %s", node.Name, node.Pos)
+	}
+	if _, exists := a.funcs[node.Name]; exists {
+		return fmt.Errorf("semantic: global %q conflicts with function at %s", node.Name, node.Pos)
+	}
+	a.globals[node.Name] = symbol{typ: node.Type, arrayLen: node.ArrayLen}
+	if node.Init == nil {
+		return nil
+	}
+	info, err := a.exprType(node.Init)
+	if err != nil {
+		return err
+	}
+	if node.ArrayLen > 0 {
+		if node.Type == ast.TypeChar && info.isStringLiteral {
+			if info.arrayLen > node.ArrayLen {
+				return fmt.Errorf("semantic: string initializer too long for %s at %s", node.Name, node.Pos)
+			}
+			return nil
+		}
+		return fmt.Errorf("semantic: array initializer for %s at %s not supported", node.Name, node.Pos)
+	}
+	if !assignable(node.Type, info) {
+		return fmt.Errorf("semantic: initializer type mismatch for %s at %s: want %s", node.Name, node.Pos, node.Type)
 	}
 	return nil
 }
@@ -77,6 +125,9 @@ func (a *analyzer) registerFunc(fn *ast.FuncDecl) error {
 	}
 	if _, exists := a.funcs[fn.Name]; exists {
 		return fmt.Errorf("semantic: duplicate function %q at %s", fn.Name, fn.Pos)
+	}
+	if _, exists := a.globals[fn.Name]; exists {
+		return fmt.Errorf("semantic: function %q conflicts with global at %s", fn.Name, fn.Pos)
 	}
 	params := make([]paramSig, 0, len(fn.Params))
 	seen := map[string]struct{}{}
@@ -101,7 +152,7 @@ func (a *analyzer) analyzeFunc(fn *ast.FuncDecl) error {
 	a.pushScope()
 	defer a.popScope()
 	for _, param := range fn.Params {
-		if err := a.declare(param.Name, symbol{typ: param.Type}, param.Pos); err != nil {
+		if err := a.declareLocal(param.Name, symbol{typ: param.Type}, param.Pos); err != nil {
 			return err
 		}
 	}
@@ -123,7 +174,7 @@ func (a *analyzer) analyzeStmt(stmt ast.Stmt, returnType ast.TypeName) error {
 	switch node := stmt.(type) {
 	case *ast.BlockStmt:
 		return a.analyzeBlock(node, returnType)
-	case *ast.VarDeclStmt:
+	case *ast.VarDecl:
 		if node.Type == ast.TypeVoid {
 			return fmt.Errorf("semantic: variable %q cannot have type void at %s", node.Name, node.Pos)
 		}
@@ -133,7 +184,7 @@ func (a *analyzer) analyzeStmt(stmt ast.Stmt, returnType ast.TypeName) error {
 		if node.ArrayLen < 0 {
 			return fmt.Errorf("semantic: invalid array length for %q at %s", node.Name, node.Pos)
 		}
-		if err := a.declare(node.Name, symbol{typ: node.Type, arrayLen: node.ArrayLen}, node.Pos); err != nil {
+		if err := a.declareLocal(node.Name, symbol{typ: node.Type, arrayLen: node.ArrayLen}, node.Pos); err != nil {
 			return err
 		}
 		if node.Init == nil {
@@ -337,7 +388,7 @@ func (a *analyzer) popScope() {
 	}
 }
 
-func (a *analyzer) declare(name string, sym symbol, pos interface{ String() string }) error {
+func (a *analyzer) declareLocal(name string, sym symbol, pos interface{ String() string }) error {
 	current := a.scopes[len(a.scopes)-1]
 	if _, exists := current[name]; exists {
 		return fmt.Errorf("semantic: duplicate declaration of %q at %s", name, pos.String())
@@ -352,7 +403,8 @@ func (a *analyzer) lookup(name string) (symbol, bool) {
 			return sym, true
 		}
 	}
-	return symbol{}, false
+	sym, ok := a.globals[name]
+	return sym, ok
 }
 
 func isSupportedType(typ ast.TypeName) bool {

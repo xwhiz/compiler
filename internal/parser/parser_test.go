@@ -113,9 +113,9 @@ func TestParseLocalDeclAndArithmetic(t *testing.T) {
 		t.Fatalf("len(stmts) = %d, want 3", len(stmts))
 	}
 
-	decl, ok := stmts[0].(*ast.VarDeclStmt)
+	decl, ok := stmts[0].(*ast.VarDecl)
 	if !ok {
-		t.Fatalf("stmt type = %T, want *ast.VarDeclStmt", stmts[0])
+		t.Fatalf("stmt type = %T, want *ast.VarDecl", stmts[0])
 	}
 	if decl.Name != "x" || decl.Type != ast.TypeInt {
 		t.Fatalf("decl = %#v, want int x", decl)
@@ -175,6 +175,30 @@ func TestParseFunctionParams(t *testing.T) {
 	}
 }
 
+func TestParseGlobalDecls(t *testing.T) {
+	source := "int g = 10; char msg[6] = \"hello\"; int main() { return g; }"
+	tokens, err := lexer.Tokenize(source)
+	if err != nil {
+		t.Fatalf("Tokenize() error = %v", err)
+	}
+	program, err := Parse(tokens)
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	if len(program.Decls) != 3 {
+		t.Fatalf("len(program.Decls) = %d, want 3", len(program.Decls))
+	}
+	if len(program.Globals) != 2 {
+		t.Fatalf("len(program.Globals) = %d, want 2", len(program.Globals))
+	}
+	if len(program.Functions) != 1 {
+		t.Fatalf("len(program.Functions) = %d, want 1", len(program.Functions))
+	}
+	if program.Globals[1].ArrayLen != 6 || program.Globals[1].Type != ast.TypeChar {
+		t.Fatalf("global[1] = %#v, want char[6]", program.Globals[1])
+	}
+}
+
 func TestParseArrayStringAndFloat(t *testing.T) {
 	source := "float twice(float x) { return x + x; } int main() { char s[6] = \"hello\"; int a[3]; a[0] = 4; return 0; }"
 	tokens, err := lexer.Tokenize(source)
@@ -190,9 +214,9 @@ func TestParseArrayStringAndFloat(t *testing.T) {
 		t.Fatalf("len(program.Functions) = %d, want 2", len(program.Functions))
 	}
 	mainFn := program.Functions[1]
-	decl, ok := mainFn.Body.Stmts[0].(*ast.VarDeclStmt)
+	decl, ok := mainFn.Body.Stmts[0].(*ast.VarDecl)
 	if !ok {
-		t.Fatalf("stmt type = %T, want *ast.VarDeclStmt", mainFn.Body.Stmts[0])
+		t.Fatalf("stmt type = %T, want *ast.VarDecl", mainFn.Body.Stmts[0])
 	}
 	if decl.ArrayLen != 6 || decl.Type != ast.TypeChar {
 		t.Fatalf("decl = %#v, want char[6]", decl)

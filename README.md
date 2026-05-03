@@ -91,6 +91,12 @@ Without phase flag, `cforge` writes `.vmo` object code.
 - return values
 - function must be defined before call
 
+### Scope
+
+- global variable declarations
+- local variable declarations
+- local shadowing of globals
+
 ### Arrays
 
 - 1D fixed-size arrays only
@@ -119,6 +125,10 @@ Passing samples:
 
 - `samples/pass/function_add.c`
 - `samples/pass/function_chain.c`
+- `samples/pass/global_scalar.c`
+- `samples/pass/global_shadow.c`
+- `samples/pass/global_array.c`
+- `samples/pass/global_string.c`
 - `samples/pass/char_string.c`
 - `samples/pass/arrays_basic.c`
 - `samples/pass/float_math.c`
@@ -131,6 +141,8 @@ Failing samples:
 - `samples/fail/call_before_def.c`
 - `samples/fail/wrong_arg_count.c`
 - `samples/fail/duplicate_function.c`
+- `samples/fail/duplicate_global.c`
+- `samples/fail/global_function_collision.c`
 - `samples/fail/duplicate_decl.c`
 - `samples/fail/missing_semicolon.c`
 - `samples/fail/undeclared_var.c`
@@ -158,4 +170,3 @@ make phases FILE=samples/slice8_run.c OBJ=/tmp/opencode/program.vmo
 - no optimizer pass yet
 - no escape sequences in char/string literals yet
 - logical `&&` and `||` evaluate both sides
-- no global variables yet

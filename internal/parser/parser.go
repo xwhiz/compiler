@@ -21,11 +21,17 @@ func Parse(tokens []token.Token) (*ast.Program, error) {
 func (p *Parser) parseProgram() (*ast.Program, error) {
 	program := &ast.Program{}
 	for !p.check(token.EOF) {
-		fn, err := p.parseFuncDecl()
+		decl, err := p.parseTopLevelDecl()
 		if err != nil {
 			return nil, err
 		}
-		program.Functions = append(program.Functions, fn)
+		program.Decls = append(program.Decls, decl)
+		switch node := decl.(type) {
+		case *ast.VarDecl:
+			program.Globals = append(program.Globals, node)
+		case *ast.FuncDecl:
+			program.Functions = append(program.Functions, node)
+		}
 	}
 	if _, err := p.consume(token.EOF, "expected end of file"); err != nil {
 		return nil, err
@@ -33,30 +39,30 @@ func (p *Parser) parseProgram() (*ast.Program, error) {
 	return program, nil
 }
 
-func (p *Parser) parseFuncDecl() (*ast.FuncDecl, error) {
+func (p *Parser) parseTopLevelDecl() (ast.Decl, error) {
 	retType, pos, err := p.parseTypeName()
 	if err != nil {
 		return nil, err
 	}
-	nameTok, err := p.consume(token.Identifier, "expected function name")
+	nameTok, err := p.consume(token.Identifier, "expected declaration name")
 	if err != nil {
 		return nil, err
 	}
-	if _, err := p.consume(token.LParen, "expected '(' after function name"); err != nil {
-		return nil, err
+	if p.match(token.LParen) {
+		params, err := p.parseParams()
+		if err != nil {
+			return nil, err
+		}
+		if _, err := p.consume(token.RParen, "expected ')' after parameter list"); err != nil {
+			return nil, err
+		}
+		body, err := p.parseBlockStmt()
+		if err != nil {
+			return nil, err
+		}
+		return &ast.FuncDecl{ReturnType: retType, Name: nameTok.Lexeme, Pos: pos, Params: params, Body: body}, nil
 	}
-	params, err := p.parseParams()
-	if err != nil {
-		return nil, err
-	}
-	if _, err := p.consume(token.RParen, "expected ')' after parameter list"); err != nil {
-		return nil, err
-	}
-	body, err := p.parseBlockStmt()
-	if err != nil {
-		return nil, err
-	}
-	return &ast.FuncDecl{ReturnType: retType, Name: nameTok.Lexeme, Pos: pos, Params: params, Body: body}, nil
+	return p.parseVarDeclTail(retType, pos, nameTok)
 }
 
 func (p *Parser) parseParams() ([]ast.Param, error) {
@@ -143,7 +149,7 @@ func (p *Parser) parseBlockStmt() (*ast.BlockStmt, error) {
 	}
 	block := &ast.BlockStmt{Pos: start.Pos}
 	for isTypeToken(p.peek().Type) {
-		decl, err := p.parseVarDeclStmt()
+		decl, err := p.parseLocalVarDecl()
 		if err != nil {
 			return nil, err
 		}
@@ -162,7 +168,7 @@ func (p *Parser) parseBlockStmt() (*ast.BlockStmt, error) {
 	return block, nil
 }
 
-func (p *Parser) parseVarDeclStmt() (ast.Stmt, error) {
+func (p *Parser) parseLocalVarDecl() (ast.Stmt, error) {
 	typeName, pos, err := p.parseTypeName()
 	if err != nil {
 		return nil, err
@@ -171,7 +177,15 @@ func (p *Parser) parseVarDeclStmt() (ast.Stmt, error) {
 	if err != nil {
 		return nil, err
 	}
-	decl := &ast.VarDeclStmt{Pos: pos, Type: typeName, Name: nameTok.Lexeme}
+	decl, err := p.parseVarDeclTail(typeName, pos, nameTok)
+	if err != nil {
+		return nil, err
+	}
+	return decl.(*ast.VarDecl), nil
+}
+
+func (p *Parser) parseVarDeclTail(typeName ast.TypeName, pos token.Position, nameTok token.Token) (ast.Decl, error) {
+	decl := &ast.VarDecl{Pos: pos, Type: typeName, Name: nameTok.Lexeme}
 	if p.match(token.LBracket) {
 		lenTok, err := p.consume(token.IntLiteral, "expected array length")
 		if err != nil {

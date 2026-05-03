@@ -18,10 +18,15 @@ const (
 	OpPushChar     Op = "push_char"
 	OpPushString   Op = "push_string"
 	OpPushLocalRef Op = "push_local_ref"
+	OpPushGlobalRef Op = "push_global_ref"
 	OpLoadLocal    Op = "load_local"
 	OpStoreLocal   Op = "store_local"
+	OpLoadGlobal   Op = "load_global"
+	OpStoreGlobal  Op = "store_global"
 	OpLoadIndex    Op = "load_index"
 	OpStoreIndex   Op = "store_index"
+	OpLoadGIndex   Op = "load_gindex"
+	OpStoreGIndex  Op = "store_gindex"
 	OpAdd          Op = "add"
 	OpSub          Op = "sub"
 	OpMul          Op = "mul"
@@ -54,7 +59,9 @@ type VarInfo struct {
 }
 
 type Program struct {
-	Functions []Function
+	Globals    []VarInfo
+	GlobalInit []Instruction
+	Functions  []Function
 }
 
 type Function struct {
@@ -84,10 +91,12 @@ type symbol struct {
 	slot     string
 	typ      ast.TypeName
 	arrayLen int
+	global   bool
 }
 
 type lowerer struct {
 	funcs      map[string]funcInfo
+	globals    map[string]symbol
 	scopes     []map[string]symbol
 	nextSlotID int
 	nextLabel  int
@@ -105,23 +114,50 @@ func Lower(program *ast.Program) (*Program, error) {
 		funcs[fn.Name] = funcInfo{ret: fn.ReturnType}
 	}
 
+	l := &lowerer{funcs: funcs, globals: map[string]symbol{}}
 	out := &Program{}
-	for _, fn := range program.Functions {
-		lowered, err := lowerFunc(fn, funcs)
-		if err != nil {
-			return nil, err
+	for _, decl := range program.Decls {
+		switch node := decl.(type) {
+		case *ast.VarDecl:
+			l.globals[node.Name] = symbol{slot: node.Name, typ: node.Type, arrayLen: node.ArrayLen, global: true}
+			out.Globals = append(out.Globals, VarInfo{Name: node.Name, Type: node.Type, ArrayLen: node.ArrayLen})
+			if err := l.lowerGlobalInit(node, out); err != nil {
+				return nil, err
+			}
+		case *ast.FuncDecl:
+			lowered, err := l.lowerFunc(node)
+			if err != nil {
+				return nil, err
+			}
+			out.Functions = append(out.Functions, *lowered)
+		default:
+			return nil, fmt.Errorf("ir: unsupported top-level declaration %T", decl)
 		}
-		out.Functions = append(out.Functions, *lowered)
 	}
 	return out, nil
 }
 
 func Format(program *Program) string {
 	var b strings.Builder
-	for i, fn := range program.Functions {
-		if i > 0 {
-			b.WriteByte('\n')
+	b.WriteString("globals\n")
+	if len(program.Globals) == 0 {
+		b.WriteString("  <empty>\n")
+	} else {
+		for _, global := range program.Globals {
+			if global.ArrayLen > 0 {
+				fmt.Fprintf(&b, "  %s:%s[%d]\n", global.Name, global.Type, global.ArrayLen)
+			} else {
+				fmt.Fprintf(&b, "  %s:%s\n", global.Name, global.Type)
+			}
 		}
+	}
+	b.WriteString("endglobals\n")
+	b.WriteString("init\n")
+	for _, inst := range program.GlobalInit {
+		fmt.Fprintf(&b, "  %s\n", inst.String())
+	}
+	b.WriteString("endinit\n")
+	for _, fn := range program.Functions {
 		fmt.Fprintf(&b, "func %s return=%s\n", fn.Name, fn.ReturnType)
 		if len(fn.Params) == 0 {
 			b.WriteString("  params <empty>\n")
@@ -157,7 +193,7 @@ func (i Instruction) String() string {
 		return fmt.Sprintf("%s %q", i.Op, rune(i.IntValue))
 	case OpPushString:
 		return fmt.Sprintf("%s %q", i.Op, i.StringValue)
-	case OpPushLocalRef, OpLoadLocal, OpStoreLocal, OpLoadIndex, OpStoreIndex, OpLabel, OpJump, OpJumpIfZero:
+	case OpPushLocalRef, OpPushGlobalRef, OpLoadLocal, OpStoreLocal, OpLoadGlobal, OpStoreGlobal, OpLoadIndex, OpStoreIndex, OpLoadGIndex, OpStoreGIndex, OpLabel, OpJump, OpJumpIfZero:
 		return fmt.Sprintf("%s %s", i.Op, i.Name)
 	case OpCallBuiltin, OpCallFunc:
 		return fmt.Sprintf("%s %s %d", i.Op, i.Name, i.ArgCount)
@@ -166,12 +202,11 @@ func (i Instruction) String() string {
 	}
 }
 
-func lowerFunc(fn *ast.FuncDecl, funcs map[string]funcInfo) (*Function, error) {
+func (l *lowerer) lowerFunc(fn *ast.FuncDecl) (*Function, error) {
 	out := &Function{Name: fn.Name, ReturnType: fn.ReturnType}
-	l := &lowerer{funcs: funcs}
 	l.pushScope()
 	for _, param := range fn.Params {
-		slot := l.declare(param.Name, param.Type, 0)
+		slot := l.declareLocal(param.Name, param.Type, 0)
 		out.Params = append(out.Params, VarInfo{Name: slot, Type: param.Type})
 	}
 	if err := l.lowerBlock(fn.Body, out); err != nil {
@@ -179,6 +214,24 @@ func lowerFunc(fn *ast.FuncDecl, funcs map[string]funcInfo) (*Function, error) {
 	}
 	l.popScope()
 	return out, nil
+}
+
+func (l *lowerer) lowerGlobalInit(node *ast.VarDecl, program *Program) error {
+	if node.Init == nil {
+		return nil
+	}
+	if node.ArrayLen > 0 {
+		if lit, ok := node.Init.(*ast.StringLiteral); ok {
+			program.GlobalInit = append(program.GlobalInit, Instruction{Op: OpInitString, Name: node.Name, StringValue: stripStringQuotes(lit.Lexeme)})
+			return nil
+		}
+		return fmt.Errorf("ir: unsupported global array initializer for %s", node.Name)
+	}
+	if _, err := l.lowerExpr(node.Init, nil, &program.GlobalInit); err != nil {
+		return err
+	}
+	program.GlobalInit = append(program.GlobalInit, Instruction{Op: OpStoreGlobal, Name: node.Name})
+	return nil
 }
 
 func (l *lowerer) lowerBlock(block *ast.BlockStmt, fn *Function) error {
@@ -196,8 +249,8 @@ func (l *lowerer) lowerStmt(stmt ast.Stmt, fn *Function) error {
 	switch node := stmt.(type) {
 	case *ast.BlockStmt:
 		return l.lowerBlock(node, fn)
-	case *ast.VarDeclStmt:
-		slot := l.declare(node.Name, node.Type, node.ArrayLen)
+	case *ast.VarDecl:
+		slot := l.declareLocal(node.Name, node.Type, node.ArrayLen)
 		fn.Instructions = append(fn.Instructions, Instruction{Op: OpDeclareLocal, Name: slot, Type: node.Type, ArrayLen: node.ArrayLen})
 		if node.Init == nil {
 			return nil
@@ -209,13 +262,13 @@ func (l *lowerer) lowerStmt(stmt ast.Stmt, fn *Function) error {
 			}
 			return fmt.Errorf("ir: unsupported array initializer for %s", node.Name)
 		}
-		if _, err := l.lowerExpr(node.Init, fn); err != nil {
+		if _, err := l.lowerExpr(node.Init, fn, &fn.Instructions); err != nil {
 			return err
 		}
 		fn.Instructions = append(fn.Instructions, Instruction{Op: OpStoreLocal, Name: slot})
 		return nil
 	case *ast.IfStmt:
-		if _, err := l.lowerExpr(node.Cond, fn); err != nil {
+		if _, err := l.lowerExpr(node.Cond, fn, &fn.Instructions); err != nil {
 			return err
 		}
 		elseLabel := l.newLabel("if_else")
@@ -225,10 +278,7 @@ func (l *lowerer) lowerStmt(stmt ast.Stmt, fn *Function) error {
 			return err
 		}
 		if node.Else != nil {
-			fn.Instructions = append(fn.Instructions,
-				Instruction{Op: OpJump, Name: endLabel},
-				Instruction{Op: OpLabel, Name: elseLabel},
-			)
+			fn.Instructions = append(fn.Instructions, Instruction{Op: OpJump, Name: endLabel}, Instruction{Op: OpLabel, Name: elseLabel})
 			if err := l.lowerStmt(node.Else, fn); err != nil {
 				return err
 			}
@@ -241,20 +291,17 @@ func (l *lowerer) lowerStmt(stmt ast.Stmt, fn *Function) error {
 		startLabel := l.newLabel("while_start")
 		endLabel := l.newLabel("while_end")
 		fn.Instructions = append(fn.Instructions, Instruction{Op: OpLabel, Name: startLabel})
-		if _, err := l.lowerExpr(node.Cond, fn); err != nil {
+		if _, err := l.lowerExpr(node.Cond, fn, &fn.Instructions); err != nil {
 			return err
 		}
 		fn.Instructions = append(fn.Instructions, Instruction{Op: OpJumpIfZero, Name: endLabel})
 		if err := l.lowerStmt(node.Body, fn); err != nil {
 			return err
 		}
-		fn.Instructions = append(fn.Instructions,
-			Instruction{Op: OpJump, Name: startLabel},
-			Instruction{Op: OpLabel, Name: endLabel},
-		)
+		fn.Instructions = append(fn.Instructions, Instruction{Op: OpJump, Name: startLabel}, Instruction{Op: OpLabel, Name: endLabel})
 		return nil
 	case *ast.ExprStmt:
-		pushesValue, err := l.lowerExpr(node.Expr, fn)
+		pushesValue, err := l.lowerExpr(node.Expr, fn, &fn.Instructions)
 		if err != nil {
 			return err
 		}
@@ -264,7 +311,7 @@ func (l *lowerer) lowerStmt(stmt ast.Stmt, fn *Function) error {
 		return nil
 	case *ast.ReturnStmt:
 		if node.Value != nil {
-			if _, err := l.lowerExpr(node.Value, fn); err != nil {
+			if _, err := l.lowerExpr(node.Value, fn, &fn.Instructions); err != nil {
 				return err
 			}
 		}
@@ -275,52 +322,68 @@ func (l *lowerer) lowerStmt(stmt ast.Stmt, fn *Function) error {
 	}
 }
 
-func (l *lowerer) lowerExpr(expr ast.Expr, fn *Function) (bool, error) {
+func (l *lowerer) lowerExpr(expr ast.Expr, fn *Function, out *[]Instruction) (bool, error) {
+	appendInst := func(insts ...Instruction) {
+		*out = append(*out, insts...)
+	}
+
 	switch node := expr.(type) {
 	case *ast.IntLiteral:
 		value, err := strconv.ParseInt(node.Lexeme, 10, 64)
 		if err != nil {
 			return false, fmt.Errorf("ir: parse int literal %q: %w", node.Lexeme, err)
 		}
-		fn.Instructions = append(fn.Instructions, Instruction{Op: OpPushInt, IntValue: value})
+		appendInst(Instruction{Op: OpPushInt, IntValue: value})
 		return true, nil
 	case *ast.FloatLiteral:
 		value, err := strconv.ParseFloat(node.Lexeme, 64)
 		if err != nil {
 			return false, fmt.Errorf("ir: parse float literal %q: %w", node.Lexeme, err)
 		}
-		fn.Instructions = append(fn.Instructions, Instruction{Op: OpPushFloat, FloatValue: value})
+		appendInst(Instruction{Op: OpPushFloat, FloatValue: value})
 		return true, nil
 	case *ast.CharLiteral:
-		fn.Instructions = append(fn.Instructions, Instruction{Op: OpPushChar, IntValue: int64(stripCharQuotes(node.Lexeme))})
+		appendInst(Instruction{Op: OpPushChar, IntValue: int64(stripCharQuotes(node.Lexeme))})
 		return true, nil
 	case *ast.StringLiteral:
-		fn.Instructions = append(fn.Instructions, Instruction{Op: OpPushString, StringValue: stripStringQuotes(node.Lexeme)})
+		appendInst(Instruction{Op: OpPushString, StringValue: stripStringQuotes(node.Lexeme)})
 		return true, nil
 	case *ast.IdentExpr:
 		sym, ok := l.lookup(node.Name)
 		if !ok {
-			return false, fmt.Errorf("ir: unknown local %q", node.Name)
+			return false, fmt.Errorf("ir: unknown variable %q", node.Name)
 		}
 		if sym.arrayLen > 0 {
-			fn.Instructions = append(fn.Instructions, Instruction{Op: OpPushLocalRef, Name: sym.slot})
+			if sym.global {
+				appendInst(Instruction{Op: OpPushGlobalRef, Name: sym.slot})
+			} else {
+				appendInst(Instruction{Op: OpPushLocalRef, Name: sym.slot})
+			}
 			return true, nil
 		}
-		fn.Instructions = append(fn.Instructions, Instruction{Op: OpLoadLocal, Name: sym.slot})
+		if sym.global {
+			appendInst(Instruction{Op: OpLoadGlobal, Name: sym.slot})
+		} else {
+			appendInst(Instruction{Op: OpLoadLocal, Name: sym.slot})
+		}
 		return true, nil
 	case *ast.IndexExpr:
 		sym, ok := l.lookup(node.Name)
 		if !ok {
-			return false, fmt.Errorf("ir: unknown local %q", node.Name)
+			return false, fmt.Errorf("ir: unknown variable %q", node.Name)
 		}
-		if _, err := l.lowerExpr(node.Index, fn); err != nil {
+		if _, err := l.lowerExpr(node.Index, fn, out); err != nil {
 			return false, err
 		}
-		fn.Instructions = append(fn.Instructions, Instruction{Op: OpLoadIndex, Name: sym.slot})
+		if sym.global {
+			appendInst(Instruction{Op: OpLoadGIndex, Name: sym.slot})
+		} else {
+			appendInst(Instruction{Op: OpLoadIndex, Name: sym.slot})
+		}
 		return true, nil
 	case *ast.CallExpr:
 		for _, arg := range node.Args {
-			if _, err := l.lowerExpr(arg, fn); err != nil {
+			if _, err := l.lowerExpr(arg, fn, out); err != nil {
 				return false, err
 			}
 		}
@@ -329,9 +392,9 @@ func (l *lowerer) lowerExpr(expr ast.Expr, fn *Function) (bool, error) {
 			return false, fmt.Errorf("ir: unknown function %q", node.Callee)
 		}
 		if info.builtin {
-			fn.Instructions = append(fn.Instructions, Instruction{Op: OpCallBuiltin, Name: node.Callee, ArgCount: len(node.Args)})
+			appendInst(Instruction{Op: OpCallBuiltin, Name: node.Callee, ArgCount: len(node.Args)})
 		} else {
-			fn.Instructions = append(fn.Instructions, Instruction{Op: OpCallFunc, Name: node.Callee, ArgCount: len(node.Args)})
+			appendInst(Instruction{Op: OpCallFunc, Name: node.Callee, ArgCount: len(node.Args)})
 		}
 		return info.ret != ast.TypeVoid, nil
 	case *ast.AssignExpr:
@@ -339,80 +402,86 @@ func (l *lowerer) lowerExpr(expr ast.Expr, fn *Function) (bool, error) {
 		case *ast.IdentExpr:
 			sym, ok := l.lookup(target.Name)
 			if !ok {
-				return false, fmt.Errorf("ir: unknown local %q", target.Name)
+				return false, fmt.Errorf("ir: unknown variable %q", target.Name)
 			}
-			if _, err := l.lowerExpr(node.Value, fn); err != nil {
+			if _, err := l.lowerExpr(node.Value, fn, out); err != nil {
 				return false, err
 			}
-			fn.Instructions = append(fn.Instructions,
-				Instruction{Op: OpDup},
-				Instruction{Op: OpStoreLocal, Name: sym.slot},
-			)
+			appendInst(Instruction{Op: OpDup})
+			if sym.global {
+				appendInst(Instruction{Op: OpStoreGlobal, Name: sym.slot})
+			} else {
+				appendInst(Instruction{Op: OpStoreLocal, Name: sym.slot})
+			}
 			return true, nil
 		case *ast.IndexExpr:
 			sym, ok := l.lookup(target.Name)
 			if !ok {
-				return false, fmt.Errorf("ir: unknown local %q", target.Name)
+				return false, fmt.Errorf("ir: unknown variable %q", target.Name)
 			}
-			if _, err := l.lowerExpr(node.Value, fn); err != nil {
+			if _, err := l.lowerExpr(node.Value, fn, out); err != nil {
 				return false, err
 			}
-			fn.Instructions = append(fn.Instructions, Instruction{Op: OpDup})
-			if _, err := l.lowerExpr(target.Index, fn); err != nil {
+			appendInst(Instruction{Op: OpDup})
+			if _, err := l.lowerExpr(target.Index, fn, out); err != nil {
 				return false, err
 			}
-			fn.Instructions = append(fn.Instructions, Instruction{Op: OpStoreIndex, Name: sym.slot})
+			if sym.global {
+				appendInst(Instruction{Op: OpStoreGIndex, Name: sym.slot})
+			} else {
+				appendInst(Instruction{Op: OpStoreIndex, Name: sym.slot})
+			}
 			return true, nil
 		default:
 			return false, fmt.Errorf("ir: unsupported assignment target %T", node.Target)
 		}
 	case *ast.BinaryExpr:
-		if _, err := l.lowerExpr(node.Left, fn); err != nil {
+		if _, err := l.lowerExpr(node.Left, fn, out); err != nil {
 			return false, err
 		}
-		if _, err := l.lowerExpr(node.Right, fn); err != nil {
+		if _, err := l.lowerExpr(node.Right, fn, out); err != nil {
 			return false, err
 		}
 		switch node.Op {
 		case ast.BinaryAdd:
-			fn.Instructions = append(fn.Instructions, Instruction{Op: OpAdd})
+			appendInst(Instruction{Op: OpAdd})
 		case ast.BinarySub:
-			fn.Instructions = append(fn.Instructions, Instruction{Op: OpSub})
+			appendInst(Instruction{Op: OpSub})
 		case ast.BinaryMul:
-			fn.Instructions = append(fn.Instructions, Instruction{Op: OpMul})
+			appendInst(Instruction{Op: OpMul})
 		case ast.BinaryDiv:
-			fn.Instructions = append(fn.Instructions, Instruction{Op: OpDiv})
+			appendInst(Instruction{Op: OpDiv})
 		case ast.BinaryMod:
-			fn.Instructions = append(fn.Instructions, Instruction{Op: OpMod})
+			appendInst(Instruction{Op: OpMod})
 		case ast.BinaryLT:
-			fn.Instructions = append(fn.Instructions, Instruction{Op: OpLT})
+			appendInst(Instruction{Op: OpLT})
 		case ast.BinaryLE:
-			fn.Instructions = append(fn.Instructions, Instruction{Op: OpLE})
+			appendInst(Instruction{Op: OpLE})
 		case ast.BinaryGT:
-			fn.Instructions = append(fn.Instructions, Instruction{Op: OpGT})
+			appendInst(Instruction{Op: OpGT})
 		case ast.BinaryGE:
-			fn.Instructions = append(fn.Instructions, Instruction{Op: OpGE})
+			appendInst(Instruction{Op: OpGE})
 		case ast.BinaryEQ:
-			fn.Instructions = append(fn.Instructions, Instruction{Op: OpEQ})
+			appendInst(Instruction{Op: OpEQ})
 		case ast.BinaryNE:
-			fn.Instructions = append(fn.Instructions, Instruction{Op: OpNE})
+			appendInst(Instruction{Op: OpNE})
 		case ast.BinaryAnd:
-			fn.Instructions = append(fn.Instructions, Instruction{Op: OpAnd})
+			appendInst(Instruction{Op: OpAnd})
 		case ast.BinaryOr:
-			fn.Instructions = append(fn.Instructions, Instruction{Op: OpOr})
+			appendInst(Instruction{Op: OpOr})
 		default:
 			return false, fmt.Errorf("ir: unsupported binary op %s", node.Op)
 		}
 		return true, nil
 	case *ast.UnaryExpr:
-		if _, err := l.lowerExpr(node.Value, fn); err != nil {
+		if _, err := l.lowerExpr(node.Value, fn, out); err != nil {
 			return false, err
 		}
 		switch node.Op {
 		case ast.UnaryNeg:
-			fn.Instructions = append(fn.Instructions, Instruction{Op: OpNeg})
+			appendInst(Instruction{Op: OpNeg})
 		case ast.UnaryNot:
-			fn.Instructions = append(fn.Instructions, Instruction{Op: OpNot})
+			appendInst(Instruction{Op: OpNot})
 		default:
 			return false, fmt.Errorf("ir: unsupported unary op %s", node.Op)
 		}
@@ -426,7 +495,7 @@ func (l *lowerer) pushScope() { l.scopes = append(l.scopes, map[string]symbol{})
 
 func (l *lowerer) popScope() { l.scopes = l.scopes[:len(l.scopes)-1] }
 
-func (l *lowerer) declare(name string, typ ast.TypeName, arrayLen int) string {
+func (l *lowerer) declareLocal(name string, typ ast.TypeName, arrayLen int) string {
 	slot := fmt.Sprintf("%s@%d", name, l.nextSlotID)
 	l.nextSlotID++
 	l.scopes[len(l.scopes)-1][name] = symbol{slot: slot, typ: typ, arrayLen: arrayLen}
@@ -439,7 +508,8 @@ func (l *lowerer) lookup(name string) (symbol, bool) {
 			return sym, true
 		}
 	}
-	return symbol{}, false
+	sym, ok := l.globals[name]
+	return sym, ok
 }
 
 func (l *lowerer) newLabel(prefix string) string {

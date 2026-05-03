@@ -12,24 +12,91 @@ import (
 func ParseText(input string) (*Program, error) {
 	lines := strings.Split(input, "\n")
 	program := &Program{}
-	for i := 0; i < len(lines); {
-		line := strings.TrimSpace(lines[i])
+	index := 0
+
+	if next, err := parseGlobalsSection(lines, index, program); err != nil {
+		return nil, err
+	} else {
+		index = next
+	}
+	if next, err := parseInitSection(lines, index, program); err != nil {
+		return nil, err
+	} else {
+		index = next
+	}
+
+	for index < len(lines) {
+		line := strings.TrimSpace(lines[index])
 		if line == "" {
-			i++
+			index++
 			continue
 		}
 		if !strings.HasPrefix(line, "func ") {
-			return nil, fmt.Errorf("vm object: line %d: expected function header", i+1)
+			return nil, fmt.Errorf("vm object: line %d: expected function header", index+1)
 		}
-
-		fn, next, err := parseFunction(lines, i)
+		fn, next, err := parseFunction(lines, index)
 		if err != nil {
 			return nil, err
 		}
 		program.Functions = append(program.Functions, fn)
-		i = next
+		index = next
 	}
 	return program, nil
+}
+
+func parseGlobalsSection(lines []string, start int, program *Program) (int, error) {
+	for start < len(lines) && strings.TrimSpace(lines[start]) == "" {
+		start++
+	}
+	if start >= len(lines) || strings.TrimSpace(lines[start]) != "globals" {
+		return 0, fmt.Errorf("vm object: line %d: expected globals section", start+1)
+	}
+	for i := start + 1; i < len(lines); i++ {
+		line := strings.TrimSpace(lines[i])
+		if line == "" {
+			continue
+		}
+		if line == "endglobals" {
+			return i + 1, nil
+		}
+		if line == "<empty>" {
+			continue
+		}
+		pieces := strings.SplitN(line, ":", 2)
+		if len(pieces) != 2 {
+			return 0, fmt.Errorf("vm object: line %d: invalid global entry %q", i+1, line)
+		}
+		typ, arrayLen, err := parseTypedSlot(pieces[1])
+		if err != nil {
+			return 0, fmt.Errorf("vm object: line %d: %w", i+1, err)
+		}
+		program.Globals = append(program.Globals, ir.VarInfo{Name: pieces[0], Type: typ, ArrayLen: arrayLen})
+	}
+	return 0, fmt.Errorf("vm object: missing endglobals")
+}
+
+func parseInitSection(lines []string, start int, program *Program) (int, error) {
+	for start < len(lines) && strings.TrimSpace(lines[start]) == "" {
+		start++
+	}
+	if start >= len(lines) || strings.TrimSpace(lines[start]) != "init" {
+		return 0, fmt.Errorf("vm object: line %d: expected init section", start+1)
+	}
+	for i := start + 1; i < len(lines); i++ {
+		line := strings.TrimSpace(lines[i])
+		if line == "" {
+			continue
+		}
+		if line == "endinit" {
+			return i + 1, nil
+		}
+		inst, err := parseInstruction(line, i+1)
+		if err != nil {
+			return 0, err
+		}
+		program.GlobalInit = append(program.GlobalInit, inst)
+	}
+	return 0, fmt.Errorf("vm object: missing endinit")
 }
 
 func parseFunction(lines []string, start int) (Function, int, error) {
@@ -39,7 +106,6 @@ func parseFunction(lines []string, start int) (Function, int, error) {
 		return Function{}, 0, fmt.Errorf("vm object: line %d: invalid function header", start+1)
 	}
 	fn := Function{Name: parts[1], ReturnType: ast.TypeName(strings.TrimPrefix(parts[2], "return="))}
-
 	if start+1 >= len(lines) {
 		return Function{}, 0, fmt.Errorf("vm object: line %d: missing params line", start+1)
 	}
@@ -49,7 +115,6 @@ func parseFunction(lines []string, start int) (Function, int, error) {
 		return Function{}, 0, err
 	}
 	fn.Params = params
-
 	for i := start + 2; i < len(lines); i++ {
 		line := strings.TrimSpace(lines[i])
 		if line == "" {
@@ -64,7 +129,6 @@ func parseFunction(lines []string, start int) (Function, int, error) {
 		}
 		fn.Instructions = append(fn.Instructions, inst)
 	}
-
 	return Function{}, 0, fmt.Errorf("vm object: line %d: missing end for function %s", start+1, fn.Name)
 }
 
@@ -84,12 +148,11 @@ func parseParamsLine(line string, lineNo int) ([]ir.VarInfo, error) {
 		if len(pieces) != 2 {
 			return nil, fmt.Errorf("vm object: line %d: invalid param %q", lineNo, part)
 		}
-		name := pieces[0]
 		typ, arrayLen, err := parseTypedSlot(pieces[1])
 		if err != nil {
 			return nil, fmt.Errorf("vm object: line %d: %w", lineNo, err)
 		}
-		params = append(params, ir.VarInfo{Name: name, Type: typ, ArrayLen: arrayLen})
+		params = append(params, ir.VarInfo{Name: pieces[0], Type: typ, ArrayLen: arrayLen})
 	}
 	return params, nil
 }
@@ -147,7 +210,7 @@ func parseInstruction(line string, lineNo int) (Instruction, error) {
 			return Instruction{}, fmt.Errorf("vm object: line %d: invalid string literal: %w", lineNo, err)
 		}
 		return Instruction{Op: op, StringValue: text}, nil
-	case OpPushLocalRef, OpLoadLocal, OpStoreLocal, OpLoadIndex, OpStoreIndex:
+	case OpPushLocalRef, OpPushGlobalRef, OpLoadLocal, OpStoreLocal, OpLoadGlobal, OpStoreGlobal, OpLoadIndex, OpStoreIndex, OpLoadGIndex, OpStoreGIndex:
 		return Instruction{Op: op, Name: rest}, nil
 	case OpCallBuiltin, OpCallFunc:
 		fields := strings.Fields(rest)

@@ -171,3 +171,45 @@ func TestParseTextRoundTrip(t *testing.T) {
 		t.Fatalf("Execute() output = %q, want %q", out.String(), "7\n")
 	}
 }
+
+func TestExecuteGlobalScalarAndArray(t *testing.T) {
+	irProgram := &ir.Program{
+		Globals: []ir.VarInfo{{Name: "g", Type: ast.TypeInt}, {Name: "msg", Type: ast.TypeChar, ArrayLen: 6}},
+		GlobalInit: []ir.Instruction{
+			{Op: ir.OpPushInt, IntValue: 10},
+			{Op: ir.OpStoreGlobal, Name: "g"},
+			{Op: ir.OpInitString, Name: "msg", StringValue: "hello"},
+		},
+		Functions: []ir.Function{{
+			Name:       "main",
+			ReturnType: ast.TypeInt,
+			Instructions: []ir.Instruction{
+				{Op: ir.OpPushGlobalRef, Name: "msg"},
+				{Op: ir.OpCallBuiltin, Name: "print_str", ArgCount: 1},
+				{Op: ir.OpCallBuiltin, Name: "print_newline", ArgCount: 0},
+				{Op: ir.OpLoadGlobal, Name: "g"},
+				{Op: ir.OpCallBuiltin, Name: "print_int", ArgCount: 1},
+				{Op: ir.OpCallBuiltin, Name: "print_newline", ArgCount: 0},
+				{Op: ir.OpLoadGlobal, Name: "g"},
+				{Op: ir.OpReturn},
+			},
+		}},
+	}
+
+	program, err := Compile(irProgram)
+	if err != nil {
+		t.Fatalf("Compile() error = %v", err)
+	}
+
+	var out bytes.Buffer
+	ret, err := Execute(program, &out)
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if ret != 10 {
+		t.Fatalf("Execute() return = %d, want 10", ret)
+	}
+	if out.String() != "hello\n10\n" {
+		t.Fatalf("Execute() output = %q, want %q", out.String(), "hello\n10\n")
+	}
+}

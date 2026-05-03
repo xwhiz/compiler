@@ -12,50 +12,56 @@ import (
 type Op string
 
 const (
-	OpDeclareLocal Op = "DECLARE_LOCAL"
-	OpInitString   Op = "INIT_STRING"
-	OpPushInt      Op = "PUSH_INT"
-	OpPushFloat    Op = "PUSH_FLOAT"
-	OpPushChar     Op = "PUSH_CHAR"
-	OpPushString   Op = "PUSH_STRING"
-	OpPushLocalRef Op = "PUSH_LOCAL_REF"
-	OpLoadLocal    Op = "LOAD_LOCAL"
-	OpStoreLocal   Op = "STORE_LOCAL"
-	OpLoadIndex    Op = "LOAD_INDEX"
-	OpStoreIndex   Op = "STORE_INDEX"
-	OpAdd          Op = "ADD"
-	OpSub          Op = "SUB"
-	OpMul          Op = "MUL"
-	OpDiv          Op = "DIV"
-	OpMod          Op = "MOD"
-	OpNeg          Op = "NEG"
-	OpNot          Op = "NOT"
-	OpLT           Op = "LT"
-	OpLE           Op = "LE"
-	OpGT           Op = "GT"
-	OpGE           Op = "GE"
-	OpEQ           Op = "EQ"
-	OpNE           Op = "NE"
-	OpAnd          Op = "AND"
-	OpOr           Op = "OR"
-	OpDup          Op = "DUP"
-	OpPop          Op = "POP"
-	OpJump         Op = "JUMP"
-	OpJumpIfZero   Op = "JUMP_IF_ZERO"
-	OpCallBuiltin  Op = "CALL_BUILTIN"
-	OpCallFunc     Op = "CALL_FUNC"
-	OpRet          Op = "RET"
+	OpDeclareLocal  Op = "DECLARE_LOCAL"
+	OpInitString    Op = "INIT_STRING"
+	OpPushInt       Op = "PUSH_INT"
+	OpPushFloat     Op = "PUSH_FLOAT"
+	OpPushChar      Op = "PUSH_CHAR"
+	OpPushString    Op = "PUSH_STRING"
+	OpPushLocalRef  Op = "PUSH_LOCAL_REF"
+	OpPushGlobalRef Op = "PUSH_GLOBAL_REF"
+	OpLoadLocal     Op = "LOAD_LOCAL"
+	OpStoreLocal    Op = "STORE_LOCAL"
+	OpLoadGlobal    Op = "LOAD_GLOBAL"
+	OpStoreGlobal   Op = "STORE_GLOBAL"
+	OpLoadIndex     Op = "LOAD_INDEX"
+	OpStoreIndex    Op = "STORE_INDEX"
+	OpLoadGIndex    Op = "LOAD_GINDEX"
+	OpStoreGIndex   Op = "STORE_GINDEX"
+	OpAdd           Op = "ADD"
+	OpSub           Op = "SUB"
+	OpMul           Op = "MUL"
+	OpDiv           Op = "DIV"
+	OpMod           Op = "MOD"
+	OpNeg           Op = "NEG"
+	OpNot           Op = "NOT"
+	OpLT            Op = "LT"
+	OpLE            Op = "LE"
+	OpGT            Op = "GT"
+	OpGE            Op = "GE"
+	OpEQ            Op = "EQ"
+	OpNE            Op = "NE"
+	OpAnd           Op = "AND"
+	OpOr            Op = "OR"
+	OpDup           Op = "DUP"
+	OpPop           Op = "POP"
+	OpJump          Op = "JUMP"
+	OpJumpIfZero    Op = "JUMP_IF_ZERO"
+	OpCallBuiltin   Op = "CALL_BUILTIN"
+	OpCallFunc      Op = "CALL_FUNC"
+	OpRet           Op = "RET"
 )
 
 type ValueKind string
 
 const (
-	KindVoid     ValueKind = "void"
-	KindInt      ValueKind = "int"
-	KindFloat    ValueKind = "float"
-	KindChar     ValueKind = "char"
-	KindString   ValueKind = "string"
-	KindArrayRef ValueKind = "array_ref"
+	KindVoid           ValueKind = "void"
+	KindInt            ValueKind = "int"
+	KindFloat          ValueKind = "float"
+	KindChar           ValueKind = "char"
+	KindString         ValueKind = "string"
+	KindLocalArrayRef  ValueKind = "local_array_ref"
+	KindGlobalArrayRef ValueKind = "global_array_ref"
 )
 
 type Value struct {
@@ -73,7 +79,9 @@ type Cell struct {
 }
 
 type Program struct {
-	Functions []Function
+	Globals    []ir.VarInfo
+	GlobalInit []Instruction
+	Functions  []Function
 }
 
 type Function struct {
@@ -100,7 +108,12 @@ type frame struct {
 }
 
 func Compile(program *ir.Program) (*Program, error) {
-	out := &Program{}
+	out := &Program{Globals: append([]ir.VarInfo(nil), program.Globals...)}
+	initInsts, err := compileInstructions(program.GlobalInit)
+	if err != nil {
+		return nil, err
+	}
+	out.GlobalInit = initInsts
 	for _, fn := range program.Functions {
 		compiled, err := compileFunction(fn)
 		if err != nil {
@@ -113,21 +126,32 @@ func Compile(program *ir.Program) (*Program, error) {
 
 func Format(program *Program) string {
 	var b strings.Builder
-	for i, fn := range program.Functions {
-		if i > 0 {
-			b.WriteByte('\n')
+	b.WriteString("globals\n")
+	if len(program.Globals) == 0 {
+		b.WriteString("  <empty>\n")
+	} else {
+		for _, global := range program.Globals {
+			if global.ArrayLen > 0 {
+				fmt.Fprintf(&b, "  %s:%s[%d]\n", global.Name, global.Type, global.ArrayLen)
+			} else {
+				fmt.Fprintf(&b, "  %s:%s\n", global.Name, global.Type)
+			}
 		}
+	}
+	b.WriteString("endglobals\n")
+	b.WriteString("init\n")
+	for _, inst := range program.GlobalInit {
+		fmt.Fprintf(&b, "  %s\n", inst.String())
+	}
+	b.WriteString("endinit\n")
+	for _, fn := range program.Functions {
 		fmt.Fprintf(&b, "func %s return=%s\n", fn.Name, fn.ReturnType)
 		if len(fn.Params) == 0 {
 			b.WriteString("  params <empty>\n")
 		} else {
 			parts := make([]string, 0, len(fn.Params))
 			for _, param := range fn.Params {
-				if param.ArrayLen > 0 {
-					parts = append(parts, fmt.Sprintf("%s:%s[%d]", param.Name, param.Type, param.ArrayLen))
-				} else {
-					parts = append(parts, fmt.Sprintf("%s:%s", param.Name, param.Type))
-				}
+				parts = append(parts, fmt.Sprintf("%s:%s", param.Name, param.Type))
 			}
 			fmt.Fprintf(&b, "  params %s\n", strings.Join(parts, ", "))
 		}
@@ -140,11 +164,18 @@ func Format(program *Program) string {
 }
 
 func Execute(program *Program, stdout io.Writer) (int64, error) {
+	globals := map[string]Cell{}
+	for _, global := range program.Globals {
+		globals[global.Name] = newCell(global.Type, global.ArrayLen)
+	}
+	if _, err := executeInstructions(program, program.GlobalInit, ast.TypeVoid, globals, nil, stdout); err != nil {
+		return 0, err
+	}
 	mainFn, ok := findFunction(program, "main")
 	if !ok {
 		return 0, fmt.Errorf("vm: missing main function")
 	}
-	ret, err := executeFunction(program, mainFn, nil, stdout)
+	ret, err := executeFunction(program, mainFn, nil, globals, stdout)
 	if err != nil {
 		return 0, err
 	}
@@ -154,11 +185,11 @@ func Execute(program *Program, stdout io.Writer) (int64, error) {
 	return ret.Int, nil
 }
 
-func executeFunction(program *Program, fn Function, args []Value, stdout io.Writer) (Value, error) {
+func executeFunction(program *Program, fn Function, args []Value, globals map[string]Cell, stdout io.Writer) (Value, error) {
 	if len(args) != len(fn.Params) {
 		return Value{}, fmt.Errorf("vm: function %s wants %d args, got %d", fn.Name, len(fn.Params), len(args))
 	}
-	fr := frame{locals: map[string]Cell{}}
+	fr := &frame{locals: map[string]Cell{}}
 	for i, param := range fn.Params {
 		casted, err := castValue(args[i], param.Type)
 		if err != nil {
@@ -166,24 +197,23 @@ func executeFunction(program *Program, fn Function, args []Value, stdout io.Writ
 		}
 		fr.locals[param.Name] = Cell{Type: param.Type, Scalar: casted}
 	}
+	return executeInstructions(program, fn.Instructions, fn.ReturnType, globals, fr, stdout)
+}
+
+func executeInstructions(program *Program, insts []Instruction, returnType ast.TypeName, globals map[string]Cell, fr *frame, stdout io.Writer) (Value, error) {
 	stack := make([]Value, 0, 32)
-	for pc := 0; pc < len(fn.Instructions); pc++ {
-		inst := fn.Instructions[pc]
+	for pc := 0; pc < len(insts); pc++ {
+		inst := insts[pc]
 		switch inst.Op {
 		case OpDeclareLocal:
+			if fr == nil {
+				return Value{}, fmt.Errorf("vm: DECLARE_LOCAL outside function")
+			}
 			fr.locals[inst.Name] = newCell(inst.Type, inst.ArrayLen)
 		case OpInitString:
-			cell := fr.locals[inst.Name]
-			if cell.ArrayLen == 0 || cell.Type != ast.TypeChar {
-				return Value{}, fmt.Errorf("vm: cannot init string into %q", inst.Name)
+			if err := initString(globals, fr, inst.Name, inst.StringValue); err != nil {
+				return Value{}, err
 			}
-			for i := range cell.Array {
-				cell.Array[i] = zeroValue(ast.TypeChar)
-			}
-			for i := 0; i < len(inst.StringValue) && i < cell.ArrayLen-1; i++ {
-				cell.Array[i] = Value{Kind: KindChar, Int: int64(inst.StringValue[i])}
-			}
-			fr.locals[inst.Name] = cell
 		case OpPushInt:
 			stack = append(stack, Value{Kind: KindInt, Int: inst.IntValue})
 		case OpPushFloat:
@@ -193,28 +223,23 @@ func executeFunction(program *Program, fn Function, args []Value, stdout io.Writ
 		case OpPushString:
 			stack = append(stack, Value{Kind: KindString, Text: inst.StringValue})
 		case OpPushLocalRef:
-			stack = append(stack, Value{Kind: KindArrayRef, Text: inst.Name})
+			stack = append(stack, Value{Kind: KindLocalArrayRef, Text: inst.Name})
+		case OpPushGlobalRef:
+			stack = append(stack, Value{Kind: KindGlobalArrayRef, Text: inst.Name})
 		case OpLoadLocal:
-			cell, ok := fr.locals[inst.Name]
+			cell, ok := resolveLocalCell(fr, inst.Name)
 			if !ok {
 				return Value{}, fmt.Errorf("vm: unknown local %q", inst.Name)
 			}
-			if cell.ArrayLen > 0 {
-				stack = append(stack, Value{Kind: KindArrayRef, Text: inst.Name})
-			} else {
-				stack = append(stack, cell.Scalar)
-			}
+			stack = append(stack, cell.Scalar)
 		case OpStoreLocal:
 			value, rest, err := popOne(stack)
 			if err != nil {
 				return Value{}, err
 			}
-			cell, ok := fr.locals[inst.Name]
+			cell, ok := resolveLocalCell(fr, inst.Name)
 			if !ok {
 				return Value{}, fmt.Errorf("vm: unknown local %q", inst.Name)
-			}
-			if cell.ArrayLen > 0 {
-				return Value{}, fmt.Errorf("vm: cannot assign whole array %q", inst.Name)
 			}
 			casted, err := castValue(value, cell.Type)
 			if err != nil {
@@ -223,50 +248,56 @@ func executeFunction(program *Program, fn Function, args []Value, stdout io.Writ
 			cell.Scalar = casted
 			fr.locals[inst.Name] = cell
 			stack = rest
-		case OpLoadIndex:
-			indexVal, rest, err := popOne(stack)
+		case OpLoadGlobal:
+			cell, ok := globals[inst.Name]
+			if !ok {
+				return Value{}, fmt.Errorf("vm: unknown global %q", inst.Name)
+			}
+			stack = append(stack, cell.Scalar)
+		case OpStoreGlobal:
+			value, rest, err := popOne(stack)
 			if err != nil {
 				return Value{}, err
 			}
-			idx, err := indexAsInt(indexVal)
-			if err != nil {
-				return Value{}, err
-			}
-			cell, ok := fr.locals[inst.Name]
-			if !ok || cell.ArrayLen == 0 {
-				return Value{}, fmt.Errorf("vm: unknown array %q", inst.Name)
-			}
-			if idx < 0 || idx >= cell.ArrayLen {
-				return Value{}, fmt.Errorf("vm: array index out of bounds for %q: %d", inst.Name, idx)
-			}
-			stack = append(rest, cell.Array[idx])
-		case OpStoreIndex:
-			indexVal, rest, err := popOne(stack)
-			if err != nil {
-				return Value{}, err
-			}
-			value, rest, err := popOne(rest)
-			if err != nil {
-				return Value{}, err
-			}
-			idx, err := indexAsInt(indexVal)
-			if err != nil {
-				return Value{}, err
-			}
-			cell, ok := fr.locals[inst.Name]
-			if !ok || cell.ArrayLen == 0 {
-				return Value{}, fmt.Errorf("vm: unknown array %q", inst.Name)
-			}
-			if idx < 0 || idx >= cell.ArrayLen {
-				return Value{}, fmt.Errorf("vm: array index out of bounds for %q: %d", inst.Name, idx)
+			cell, ok := globals[inst.Name]
+			if !ok {
+				return Value{}, fmt.Errorf("vm: unknown global %q", inst.Name)
 			}
 			casted, err := castValue(value, cell.Type)
 			if err != nil {
 				return Value{}, err
 			}
-			cell.Array[idx] = casted
-			fr.locals[inst.Name] = cell
+			cell.Scalar = casted
+			globals[inst.Name] = cell
 			stack = rest
+		case OpLoadIndex:
+			cell, ok := resolveLocalArray(fr, inst.Name)
+			newStack, err := loadIndex(stack, cell, ok)
+			if err != nil {
+				return Value{}, err
+			}
+			stack = newStack
+		case OpStoreIndex:
+			cell, ok := resolveLocalArray(fr, inst.Name)
+			newStack, err := storeIndex(stack, cell, ok, func(cell Cell) { fr.locals[inst.Name] = cell })
+			if err != nil {
+				return Value{}, err
+			}
+			stack = newStack
+		case OpLoadGIndex:
+			cell, ok := resolveGlobalArray(globals, inst.Name)
+			newStack, err := loadIndex(stack, cell, ok)
+			if err != nil {
+				return Value{}, err
+			}
+			stack = newStack
+		case OpStoreGIndex:
+			cell, ok := resolveGlobalArray(globals, inst.Name)
+			newStack, err := storeIndex(stack, cell, ok, func(cell Cell) { globals[inst.Name] = cell })
+			if err != nil {
+				return Value{}, err
+			}
+			stack = newStack
 		case OpAdd, OpSub, OpMul, OpDiv, OpMod, OpLT, OpLE, OpGT, OpGE, OpEQ, OpNE, OpAnd, OpOr:
 			newStack, err := evalBinary(stack, inst.Op)
 			if err != nil {
@@ -312,7 +343,7 @@ func executeFunction(program *Program, fn Function, args []Value, stdout io.Writ
 				return Value{}, err
 			}
 			stack = rest
-			if err := callBuiltin(fr, inst.Name, callArgs, stdout); err != nil {
+			if err := callBuiltin(globals, fr, inst.Name, callArgs, stdout); err != nil {
 				return Value{}, err
 			}
 		case OpCallFunc:
@@ -325,7 +356,7 @@ func executeFunction(program *Program, fn Function, args []Value, stdout io.Writ
 			if !ok {
 				return Value{}, fmt.Errorf("vm: unknown function %q", inst.Name)
 			}
-			ret, err := executeFunction(program, callee, callArgs, stdout)
+			ret, err := executeFunction(program, callee, callArgs, globals, stdout)
 			if err != nil {
 				return Value{}, err
 			}
@@ -333,22 +364,22 @@ func executeFunction(program *Program, fn Function, args []Value, stdout io.Writ
 				stack = append(stack, ret)
 			}
 		case OpRet:
-			if fn.ReturnType == ast.TypeVoid {
+			if returnType == ast.TypeVoid {
 				return zeroValue(ast.TypeVoid), nil
 			}
 			if len(stack) == 0 {
-				return zeroValue(fn.ReturnType), nil
+				return zeroValue(returnType), nil
 			}
 			value, _, err := popOne(stack)
 			if err != nil {
 				return Value{}, err
 			}
-			return castValue(value, fn.ReturnType)
+			return castValue(value, returnType)
 		default:
 			return Value{}, fmt.Errorf("vm: unsupported instruction %q", inst.Op)
 		}
 	}
-	return zeroValue(fn.ReturnType), nil
+	return zeroValue(returnType), nil
 }
 
 func (i Instruction) String() string {
@@ -368,7 +399,7 @@ func (i Instruction) String() string {
 		return fmt.Sprintf("%s %q", i.Op, rune(i.IntValue))
 	case OpPushString:
 		return fmt.Sprintf("%s %q", i.Op, i.StringValue)
-	case OpPushLocalRef, OpLoadLocal, OpStoreLocal, OpLoadIndex, OpStoreIndex:
+	case OpPushLocalRef, OpPushGlobalRef, OpLoadLocal, OpStoreLocal, OpLoadGlobal, OpStoreGlobal, OpLoadIndex, OpStoreIndex, OpLoadGIndex, OpStoreGIndex:
 		return fmt.Sprintf("%s %s", i.Op, i.Name)
 	case OpJump, OpJumpIfZero:
 		return fmt.Sprintf("%s %d (%s)", i.Op, i.Target, i.Name)
@@ -381,95 +412,115 @@ func (i Instruction) String() string {
 
 func compileFunction(fn ir.Function) (Function, error) {
 	compiled := Function{Name: fn.Name, ReturnType: fn.ReturnType, Params: append([]ir.VarInfo(nil), fn.Params...)}
+	insts, err := compileInstructions(fn.Instructions)
+	if err != nil {
+		return Function{}, err
+	}
+	compiled.Instructions = insts
+	return compiled, nil
+}
+
+func compileInstructions(irInsts []ir.Instruction) ([]Instruction, error) {
 	labels := map[string]int{}
 	pc := 0
-	for _, inst := range fn.Instructions {
+	for _, inst := range irInsts {
 		if inst.Op == ir.OpLabel {
 			labels[inst.Name] = pc
 			continue
 		}
 		pc++
 	}
-	for _, inst := range fn.Instructions {
+	compiled := make([]Instruction, 0, len(irInsts))
+	for _, inst := range irInsts {
 		switch inst.Op {
 		case ir.OpLabel:
 			continue
 		case ir.OpDeclareLocal:
-			compiled.Instructions = append(compiled.Instructions, Instruction{Op: OpDeclareLocal, Name: inst.Name, Type: inst.Type, ArrayLen: inst.ArrayLen})
+			compiled = append(compiled, Instruction{Op: OpDeclareLocal, Name: inst.Name, Type: inst.Type, ArrayLen: inst.ArrayLen})
 		case ir.OpInitString:
-			compiled.Instructions = append(compiled.Instructions, Instruction{Op: OpInitString, Name: inst.Name, StringValue: inst.StringValue})
+			compiled = append(compiled, Instruction{Op: OpInitString, Name: inst.Name, StringValue: inst.StringValue})
 		case ir.OpPushInt:
-			compiled.Instructions = append(compiled.Instructions, Instruction{Op: OpPushInt, IntValue: inst.IntValue})
+			compiled = append(compiled, Instruction{Op: OpPushInt, IntValue: inst.IntValue})
 		case ir.OpPushFloat:
-			compiled.Instructions = append(compiled.Instructions, Instruction{Op: OpPushFloat, FloatValue: inst.FloatValue})
+			compiled = append(compiled, Instruction{Op: OpPushFloat, FloatValue: inst.FloatValue})
 		case ir.OpPushChar:
-			compiled.Instructions = append(compiled.Instructions, Instruction{Op: OpPushChar, IntValue: inst.IntValue})
+			compiled = append(compiled, Instruction{Op: OpPushChar, IntValue: inst.IntValue})
 		case ir.OpPushString:
-			compiled.Instructions = append(compiled.Instructions, Instruction{Op: OpPushString, StringValue: inst.StringValue})
+			compiled = append(compiled, Instruction{Op: OpPushString, StringValue: inst.StringValue})
 		case ir.OpPushLocalRef:
-			compiled.Instructions = append(compiled.Instructions, Instruction{Op: OpPushLocalRef, Name: inst.Name})
+			compiled = append(compiled, Instruction{Op: OpPushLocalRef, Name: inst.Name})
+		case ir.OpPushGlobalRef:
+			compiled = append(compiled, Instruction{Op: OpPushGlobalRef, Name: inst.Name})
 		case ir.OpLoadLocal:
-			compiled.Instructions = append(compiled.Instructions, Instruction{Op: OpLoadLocal, Name: inst.Name})
+			compiled = append(compiled, Instruction{Op: OpLoadLocal, Name: inst.Name})
 		case ir.OpStoreLocal:
-			compiled.Instructions = append(compiled.Instructions, Instruction{Op: OpStoreLocal, Name: inst.Name})
+			compiled = append(compiled, Instruction{Op: OpStoreLocal, Name: inst.Name})
+		case ir.OpLoadGlobal:
+			compiled = append(compiled, Instruction{Op: OpLoadGlobal, Name: inst.Name})
+		case ir.OpStoreGlobal:
+			compiled = append(compiled, Instruction{Op: OpStoreGlobal, Name: inst.Name})
 		case ir.OpLoadIndex:
-			compiled.Instructions = append(compiled.Instructions, Instruction{Op: OpLoadIndex, Name: inst.Name})
+			compiled = append(compiled, Instruction{Op: OpLoadIndex, Name: inst.Name})
 		case ir.OpStoreIndex:
-			compiled.Instructions = append(compiled.Instructions, Instruction{Op: OpStoreIndex, Name: inst.Name})
+			compiled = append(compiled, Instruction{Op: OpStoreIndex, Name: inst.Name})
+		case ir.OpLoadGIndex:
+			compiled = append(compiled, Instruction{Op: OpLoadGIndex, Name: inst.Name})
+		case ir.OpStoreGIndex:
+			compiled = append(compiled, Instruction{Op: OpStoreGIndex, Name: inst.Name})
 		case ir.OpAdd:
-			compiled.Instructions = append(compiled.Instructions, Instruction{Op: OpAdd})
+			compiled = append(compiled, Instruction{Op: OpAdd})
 		case ir.OpSub:
-			compiled.Instructions = append(compiled.Instructions, Instruction{Op: OpSub})
+			compiled = append(compiled, Instruction{Op: OpSub})
 		case ir.OpMul:
-			compiled.Instructions = append(compiled.Instructions, Instruction{Op: OpMul})
+			compiled = append(compiled, Instruction{Op: OpMul})
 		case ir.OpDiv:
-			compiled.Instructions = append(compiled.Instructions, Instruction{Op: OpDiv})
+			compiled = append(compiled, Instruction{Op: OpDiv})
 		case ir.OpMod:
-			compiled.Instructions = append(compiled.Instructions, Instruction{Op: OpMod})
+			compiled = append(compiled, Instruction{Op: OpMod})
 		case ir.OpNeg:
-			compiled.Instructions = append(compiled.Instructions, Instruction{Op: OpNeg})
+			compiled = append(compiled, Instruction{Op: OpNeg})
 		case ir.OpNot:
-			compiled.Instructions = append(compiled.Instructions, Instruction{Op: OpNot})
+			compiled = append(compiled, Instruction{Op: OpNot})
 		case ir.OpLT:
-			compiled.Instructions = append(compiled.Instructions, Instruction{Op: OpLT})
+			compiled = append(compiled, Instruction{Op: OpLT})
 		case ir.OpLE:
-			compiled.Instructions = append(compiled.Instructions, Instruction{Op: OpLE})
+			compiled = append(compiled, Instruction{Op: OpLE})
 		case ir.OpGT:
-			compiled.Instructions = append(compiled.Instructions, Instruction{Op: OpGT})
+			compiled = append(compiled, Instruction{Op: OpGT})
 		case ir.OpGE:
-			compiled.Instructions = append(compiled.Instructions, Instruction{Op: OpGE})
+			compiled = append(compiled, Instruction{Op: OpGE})
 		case ir.OpEQ:
-			compiled.Instructions = append(compiled.Instructions, Instruction{Op: OpEQ})
+			compiled = append(compiled, Instruction{Op: OpEQ})
 		case ir.OpNE:
-			compiled.Instructions = append(compiled.Instructions, Instruction{Op: OpNE})
+			compiled = append(compiled, Instruction{Op: OpNE})
 		case ir.OpAnd:
-			compiled.Instructions = append(compiled.Instructions, Instruction{Op: OpAnd})
+			compiled = append(compiled, Instruction{Op: OpAnd})
 		case ir.OpOr:
-			compiled.Instructions = append(compiled.Instructions, Instruction{Op: OpOr})
+			compiled = append(compiled, Instruction{Op: OpOr})
 		case ir.OpDup:
-			compiled.Instructions = append(compiled.Instructions, Instruction{Op: OpDup})
+			compiled = append(compiled, Instruction{Op: OpDup})
 		case ir.OpPop:
-			compiled.Instructions = append(compiled.Instructions, Instruction{Op: OpPop})
+			compiled = append(compiled, Instruction{Op: OpPop})
 		case ir.OpJump:
 			target, ok := labels[inst.Name]
 			if !ok {
-				return Function{}, fmt.Errorf("vm: unknown jump label %q", inst.Name)
+				return nil, fmt.Errorf("vm: unknown jump label %q", inst.Name)
 			}
-			compiled.Instructions = append(compiled.Instructions, Instruction{Op: OpJump, Name: inst.Name, Target: target})
+			compiled = append(compiled, Instruction{Op: OpJump, Name: inst.Name, Target: target})
 		case ir.OpJumpIfZero:
 			target, ok := labels[inst.Name]
 			if !ok {
-				return Function{}, fmt.Errorf("vm: unknown jump label %q", inst.Name)
+				return nil, fmt.Errorf("vm: unknown jump label %q", inst.Name)
 			}
-			compiled.Instructions = append(compiled.Instructions, Instruction{Op: OpJumpIfZero, Name: inst.Name, Target: target})
+			compiled = append(compiled, Instruction{Op: OpJumpIfZero, Name: inst.Name, Target: target})
 		case ir.OpCallBuiltin:
-			compiled.Instructions = append(compiled.Instructions, Instruction{Op: OpCallBuiltin, Name: inst.Name, ArgCount: inst.ArgCount})
+			compiled = append(compiled, Instruction{Op: OpCallBuiltin, Name: inst.Name, ArgCount: inst.ArgCount})
 		case ir.OpCallFunc:
-			compiled.Instructions = append(compiled.Instructions, Instruction{Op: OpCallFunc, Name: inst.Name, ArgCount: inst.ArgCount})
+			compiled = append(compiled, Instruction{Op: OpCallFunc, Name: inst.Name, ArgCount: inst.ArgCount})
 		case ir.OpReturn:
-			compiled.Instructions = append(compiled.Instructions, Instruction{Op: OpRet})
+			compiled = append(compiled, Instruction{Op: OpRet})
 		default:
-			return Function{}, fmt.Errorf("vm: unsupported IR op %q", inst.Op)
+			return nil, fmt.Errorf("vm: unsupported IR op %q", inst.Op)
 		}
 	}
 	return compiled, nil
@@ -634,17 +685,10 @@ func binaryResult(left, right Value, op Op) (Value, error) {
 			return Value{}, err
 		}
 		if op == OpAnd {
-			if lb && rb {
-				return Value{Kind: KindInt, Int: 1}, nil
-			}
-			return Value{Kind: KindInt, Int: 0}, nil
+			return boolInt(lb && rb), nil
 		}
-		if lb || rb {
-			return Value{Kind: KindInt, Int: 1}, nil
-		}
-		return Value{Kind: KindInt, Int: 0}, nil
+		return boolInt(lb || rb), nil
 	}
-
 	if left.Kind == KindFloat || right.Kind == KindFloat {
 		lf, err := asFloat(left)
 		if err != nil {
@@ -684,7 +728,6 @@ func binaryResult(left, right Value, op Op) (Value, error) {
 			return Value{}, fmt.Errorf("vm: unsupported binary op %s", op)
 		}
 	}
-
 	li, err := asIntLike(left)
 	if err != nil {
 		return Value{}, err
@@ -754,7 +797,107 @@ func boolInt(v bool) Value {
 	return Value{Kind: KindInt, Int: 0}
 }
 
-func callBuiltin(fr frame, name string, args []Value, stdout io.Writer) error {
+func resolveLocalCell(fr *frame, name string) (Cell, bool) {
+	if fr == nil {
+		return Cell{}, false
+	}
+	cell, ok := fr.locals[name]
+	return cell, ok
+}
+
+func resolveLocalArray(fr *frame, name string) (Cell, bool) {
+	cell, ok := resolveLocalCell(fr, name)
+	if !ok || cell.ArrayLen == 0 {
+		return Cell{}, false
+	}
+	return cell, true
+}
+
+func resolveGlobalArray(globals map[string]Cell, name string) (Cell, bool) {
+	cell, ok := globals[name]
+	if !ok || cell.ArrayLen == 0 {
+		return Cell{}, false
+	}
+	return cell, true
+}
+
+func loadIndex(stack []Value, cell Cell, ok bool) ([]Value, error) {
+	if !ok {
+		return nil, fmt.Errorf("vm: unknown array")
+	}
+	indexVal, rest, err := popOne(stack)
+	if err != nil {
+		return nil, err
+	}
+	idx, err := indexAsInt(indexVal)
+	if err != nil {
+		return nil, err
+	}
+	if idx < 0 || idx >= cell.ArrayLen {
+		return nil, fmt.Errorf("vm: array index out of bounds: %d", idx)
+	}
+	return append(rest, cell.Array[idx]), nil
+}
+
+func storeIndex(stack []Value, cell Cell, ok bool, save func(Cell)) ([]Value, error) {
+	if !ok {
+		return nil, fmt.Errorf("vm: unknown array")
+	}
+	indexVal, rest, err := popOne(stack)
+	if err != nil {
+		return nil, err
+	}
+	value, rest, err := popOne(rest)
+	if err != nil {
+		return nil, err
+	}
+	idx, err := indexAsInt(indexVal)
+	if err != nil {
+		return nil, err
+	}
+	if idx < 0 || idx >= cell.ArrayLen {
+		return nil, fmt.Errorf("vm: array index out of bounds: %d", idx)
+	}
+	casted, err := castValue(value, cell.Type)
+	if err != nil {
+		return nil, err
+	}
+	cell.Array[idx] = casted
+	save(cell)
+	return rest, nil
+}
+
+func initString(globals map[string]Cell, fr *frame, name, text string) error {
+	if fr != nil {
+		if cell, ok := fr.locals[name]; ok {
+			if cell.ArrayLen == 0 || cell.Type != ast.TypeChar {
+				return fmt.Errorf("vm: cannot init string into %q", name)
+			}
+			for i := range cell.Array {
+				cell.Array[i] = zeroValue(ast.TypeChar)
+			}
+			for i := 0; i < len(text) && i < cell.ArrayLen-1; i++ {
+				cell.Array[i] = Value{Kind: KindChar, Int: int64(text[i])}
+			}
+			fr.locals[name] = cell
+			return nil
+		}
+	}
+	cell, ok := globals[name]
+	if !ok || cell.ArrayLen == 0 || cell.Type != ast.TypeChar {
+		return fmt.Errorf("vm: cannot init string into %q", name)
+	}
+	for i := range cell.Array {
+		cell.Array[i] = zeroValue(ast.TypeChar)
+	}
+	for i := 0; i < len(text) && i < cell.ArrayLen-1; i++ {
+		cell.Array[i] = Value{Kind: KindChar, Int: int64(text[i])}
+	}
+	globals[name] = cell
+	return nil
+}
+
+func callBuiltin(globals map[string]Cell, fr *frame, name string, args []Value, stdout io.Writer) error {
 	switch name {
 	case "print_int":
 		if len(args) != 1 {
@@ -793,23 +936,18 @@ func callBuiltin(fr frame, name string, args []Value, stdout io.Writer) error {
 		case KindString:
 			_, err := io.WriteString(stdout, args[0].Text)
 			return err
-		case KindArrayRef:
-			cell, ok := fr.locals[args[0].Text]
-			if !ok || cell.ArrayLen == 0 || cell.Type != ast.TypeChar {
-				return fmt.Errorf("vm: print_str wants char array ref, got %q", args[0].Text)
+		case KindLocalArrayRef:
+			cell, ok := resolveLocalArray(fr, args[0].Text)
+			if !ok || cell.Type != ast.TypeChar {
+				return fmt.Errorf("vm: print_str wants local char array ref, got %q", args[0].Text)
 			}
-			var b strings.Builder
-			for _, v := range cell.Array {
-				if v.Kind == KindChar && v.Int == 0 {
-					break
-				}
-				if v.Kind != KindChar {
-					return fmt.Errorf("vm: print_str found non-char element in %q", args[0].Text)
-				}
-				b.WriteByte(byte(v.Int))
+			return printCharArray(stdout, cell)
+		case KindGlobalArrayRef:
+			cell, ok := resolveGlobalArray(globals, args[0].Text)
+			if !ok || cell.Type != ast.TypeChar {
+				return fmt.Errorf("vm: print_str wants global char array ref, got %q", args[0].Text)
 			}
-			_, err := io.WriteString(stdout, b.String())
-			return err
+			return printCharArray(stdout, cell)
 		default:
 			return fmt.Errorf("vm: print_str wants string or char array ref, got %s", args[0].Kind)
 		}
@@ -822,4 +960,19 @@ func callBuiltin(fr frame, name string, args []Value, stdout io.Writer) error {
 	default:
 		return fmt.Errorf("vm: unknown builtin %q", name)
 	}
+}
+
+func printCharArray(stdout io.Writer, cell Cell) error {
+	var b strings.Builder
+	for _, v := range cell.Array {
+		if v.Kind == KindChar && v.Int == 0 {
+			break
+		}
+		if v.Kind != KindChar {
+			return fmt.Errorf("vm: print_str found non-char array element")
+		}
+		b.WriteByte(byte(v.Int))
+	}
+	_, err := io.WriteString(stdout, b.String())
+	return err
 }
