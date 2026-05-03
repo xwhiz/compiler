@@ -54,3 +54,6 @@ to_file: build
 
 build:
 	@go build -o $(BIN) $(MAIN)
+
+test: build
+	@go test ./...
