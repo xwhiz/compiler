@@ -1,0 +1,928 @@
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage{graphicx}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{hyperref}
+\usepackage{enumitem}
+\usepackage{fancyvrb}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=black,
+    urlcolor=blue
+}
+
+\definecolor{codebg}{RGB}{245,245,245}
+\definecolor{codekw}{RGB}{0,90,160}
+\definecolor{codecm}{RGB}{0,128,0}
+\definecolor{codest}{RGB}{170,55,30}
+
+\lstdefinestyle{reportcode}{
+    backgroundcolor=\color{codebg},
+    basicstyle=\ttfamily\small,
+    keywordstyle=\color{codekw}\bfseries,
+    commentstyle=\color{codecm}\itshape,
+    stringstyle=\color{codest},
+    breaklines=true,
+    showstringspaces=false,
+    frame=single,
+    framerule=0.4pt,
+    rulecolor=\color{black!30},
+    xleftmargin=10pt,
+    xrightmargin=5pt,
+    aboveskip=10pt,
+    belowskip=10pt
+}
+
+\lstdefinelanguage{ebnf}{
+    morecomment=[l]{//},
+    morestring=[b]",
+    sensitive=true
+}
+
+\lstset{style=reportcode}
+
+\newcommand{\imgplaceholder}[2][0.88\linewidth]{%
+    \begin{center}
+        \fbox{\parbox[c][0.26\textheight][c]{#1}{\centering\itshape #2}}
+    \end{center}%
+}
+
+\newcommand{\screenshotplaceholder}[2]{%
+    \begin{figure}[h!]
+        \centering
+        \imgplaceholder{Screenshot placeholder\\[4pt]Replace with image from:\\ #2}
+        \caption{#1}
+    \end{figure}
+}
+
+\begin{document}
+
+\begin{titlepage}
+    \centering
+    \vspace*{2cm}
+
+    {\scshape\LARGE Compiler Construction Project \par}
+    \vspace{0.5cm}
+    {\large Spring 2026\par}
+
+    \vspace{2.2cm}
+    \rule{\linewidth}{0.5pt}\\[0.6cm]
+    {\huge\bfseries Compiler for a C-Like Language Subset\par}
+    \vspace{0.3cm}
+    {\Large\itshape VM-Based Code Generation and Runtime Execution\par}
+    \rule{\linewidth}{0.5pt}\\[1.5cm]
+
+    \vspace{1.2cm}
+    {\large\bfseries Submitted by\par}
+    \vspace{0.6cm}
+
+    \begin{tabular}{ll}
+        \textbf{Name} & \textbf{CMS ID} \\
+        \rule{0pt}{14pt}\textit{Aqsa Batool} & \textit{413777} \\
+        \rule{0pt}{14pt}\textit{Muhammad Hamza} & \textit{407251} \\
+        \rule{0pt}{14pt}\textit{Ahmed Mohiuddin Shah} & \textit{415216}
+    \end{tabular}
+
+    \vfill
+
+    {\large Project Report\par}
+    {\large \today\par}
+\end{titlepage}
+
+\section{Introduction}
+
+This project implements a compiler for a well-defined subset of the C language.
+The implementation covers the complete frontend and execution pipeline: lexical
+analysis, syntax analysis, semantic analysis, intermediate representation,
+object-code generation, and runtime execution. Instead of generating native
+machine code, the compiler emits a custom human-readable VM object format
+(``.vmo''), and a separate runtime executes that object code. This design keeps
+the compilation phases explicit and easy to demonstrate while still satisfying
+the requirement that user programs can be compiled and executed.
+
+The project is organized around two tools:
+
+\begin{itemize}[leftmargin=2em]
+    \item \textbf{cforge}: compiler executable that tokenizes, parses, checks,
+    lowers, and emits VM object code.
+    \item \textbf{crun}: runtime executable that loads the generated object file
+    and executes it on a custom virtual machine.
+\end{itemize}
+
+The project also includes phase-wise inspection flags so that every important
+stage can be shown independently during presentation or debugging.
+
+\section{Objectives}
+
+The main objectives achieved in this project are:
+
+\begin{enumerate}[leftmargin=2em]
+    \item Design a handwritten compiler for a meaningful subset of C.
+    \item Implement lexical analysis with position-aware tokens.
+    \item Implement recursive-descent parsing and explicit abstract syntax tree
+    construction.
+    \item Perform semantic analysis including scope handling, type checking,
+    function checking, and array checking.
+    \item Generate an intermediate representation and lower it to VM object
+    code.
+    \item Execute compiled programs through a separate runtime.
+    \item Provide clean build, test, compile, and run workflows.
+\end{enumerate}
+
+\section{Implemented Language Subset}
+
+The implemented subset is intentionally smaller than full ISO C, but large
+enough to demonstrate all core compiler phases.
+
+\subsection*{Types}
+
+\begin{itemize}[leftmargin=2em]
+    \item \texttt{int}
+    \item \texttt{char}
+    \item \texttt{float}
+    \item \texttt{void}
+\end{itemize}
+
+\subsection*{Declarations}
+
+\begin{itemize}[leftmargin=2em]
+    \item global scalar declarations
+    \item global 1D fixed-size array declarations
+    \item local scalar declarations
+    \item local 1D fixed-size array declarations
+    \item scalar initializers
+    \item \texttt{char s[N] = "literal"}
+\end{itemize}
+
+\subsection*{Statements}
+
+\begin{itemize}[leftmargin=2em]
+    \item block statements
+    \item assignments
+    \item expression statements
+    \item \texttt{if} / \texttt{else}
+    \item \texttt{while}
+    \item \texttt{return}
+\end{itemize}
+
+\subsection*{Expressions}
+
+\begin{itemize}[leftmargin=2em]
+    \item identifiers
+    \item integer, float, char, and string literals
+    \item function calls
+    \item array indexing
+    \item unary \texttt{-} and \texttt{!}
+    \item binary \texttt{+ - * / \% < <= > >= == != \&\& ||}
+\end{itemize}
+
+\subsection*{Functions}
+
+\begin{itemize}[leftmargin=2em]
+    \item user-defined functions
+    \item typed parameters
+    \item return values
+    \item \texttt{main}
+    \item function must be defined before call
+\end{itemize}
+
+\subsection*{Builtins}
+
+\begin{itemize}[leftmargin=2em]
+    \item \texttt{print\_int(int)}
+    \item \texttt{print\_float(float)}
+    \item \texttt{print\_char(char)}
+    \item \texttt{print\_str(char[])}
+    \item \texttt{print\_newline()}
+\end{itemize}
+
+\subsection*{Current Deliberate Limits}
+
+\begin{itemize}[leftmargin=2em]
+    \item no \texttt{for} statement
+    \item no 2D arrays
+    \item no array parameters
+    \item no optimizer pass yet
+    \item no escape sequences in char and string literals yet
+    \item \texttt{\&\&} and \texttt{||} evaluate both operands
+\end{itemize}
+
+\section{Project Structure}
+
+\begin{lstlisting}
+compiler/
+|-- cmd/
+|   |-- cforge/          # compiler entry point
+|   `-- crun/            # runtime entry point
+|-- internal/
+|   |-- token/           # token kinds and positions
+|   |-- lexer/           # handwritten scanner
+|   |-- ast/             # AST node definitions and pretty printer
+|   |-- parser/          # recursive-descent parser
+|   |-- sema/            # semantic analysis and symbol checking
+|   |-- ir/              # intermediate representation and lowering
+|   |-- vm/              # VM object model, loader, and executor
+|   |-- driver/          # compiler CLI logic
+|   `-- runtimecli/      # runtime CLI logic
+|-- samples/
+|   |-- pass/            # valid sample programs
+|   `-- fail/            # invalid sample programs
+|-- Makefile
+|-- README.md
+`-- report.tex
+\end{lstlisting}
+
+\section{Compiler Pipeline Overview}
+
+The implemented compilation and execution flow is:
+
+\begin{lstlisting}
+source.c
+  -> lexer
+  -> tokens
+  -> parser
+  -> AST
+  -> semantic analysis
+  -> IR
+  -> VM object code (.vmo)
+  -> crun runtime
+  -> observed program output
+\end{lstlisting}
+
+This separation is useful for both grading and debugging because each stage can
+be displayed independently using compiler flags.
+
+\section{Lexical Analysis}
+
+The lexer is handwritten in Go. It reads the source character stream and emits a
+sequence of tokens with line and column positions. These positions are reused by
+the parser and semantic analyzer to report precise diagnostics.
+
+The scanner recognizes:
+
+\begin{itemize}[leftmargin=2em]
+    \item keywords: \texttt{int}, \texttt{char}, \texttt{float}, \texttt{void},
+    \texttt{if}, \texttt{else}, \texttt{while}, \texttt{return}
+    \item identifiers
+    \item integer literals
+    \item float literals
+    \item character literals
+    \item string literals
+    \item operators and punctuation
+    \item single-line comments beginning with \texttt{//}
+\end{itemize}
+
+The compiler intentionally supports only plain character and string literals in
+this version, with no escape-sequence processing.
+
+Example token dump produced by:
+
+\begin{lstlisting}
+./bin/cforge --tokens samples/slice7_run.c
+\end{lstlisting}
+
+\begin{lstlisting}
+1:1 KW_INT       "int"
+2:5 KW_CHAR      "char"
+2:14 CHAR_LIT     "'A'"
+5:15 STRING_LIT   "\"hello\""
+9:1 EOF          ""
+\end{lstlisting}
+
+\section{Grammar Specification}
+
+The grammar is implemented with handwritten recursive-descent parsing. The
+following EBNF describes the accepted subset.
+
+\subsection*{Top-Level Declarations}
+
+\begin{lstlisting}[language=ebnf]
+program        = { top_decl } EOF ;
+
+top_decl       = var_decl | function_def ;
+
+function_def   = type_spec IDENTIFIER "(" params ")" block ;
+
+params         = "void"
+               | param { "," param }
+               | empty ;
+
+param          = type_spec IDENTIFIER ;
+
+var_decl       = type_spec IDENTIFIER [ array_spec ] [ "=" expr ] ";" ;
+
+array_spec     = "[" INT_LITERAL "]" ;
+
+type_spec      = "int" | "char" | "float" | "void" ;
+\end{lstlisting}
+
+\subsection*{Blocks and Statements}
+
+\begin{lstlisting}[language=ebnf]
+block          = "{" { local_decl } { stmt } "}" ;
+
+local_decl     = var_decl ;
+
+stmt           = block
+               | if_stmt
+               | while_stmt
+               | return_stmt
+               | expr_stmt ;
+
+if_stmt        = "if" "(" expr ")" stmt [ "else" stmt ] ;
+
+while_stmt     = "while" "(" expr ")" stmt ;
+
+return_stmt    = "return" [ expr ] ";" ;
+
+expr_stmt      = expr ";" ;
+\end{lstlisting}
+
+\subsection*{Expressions}
+
+\begin{lstlisting}[language=ebnf]
+expr           = assignment ;
+
+assignment     = logical_or [ "=" assignment ] ;
+
+logical_or     = logical_and { "||" logical_and } ;
+
+logical_and    = equality { "&&" equality } ;
+
+equality       = relational { ("==" | "!=") relational } ;
+
+relational     = additive { ("<" | "<=" | ">" | ">=") additive } ;
+
+additive       = multiplicative { ("+" | "-") multiplicative } ;
+
+multiplicative = unary { ("*" | "/" | "%") unary } ;
+
+unary          = ("-" | "!") unary | postfix ;
+
+postfix        = primary
+                 { "(" [ arguments ] ")"
+                 | "[" expr "]" } ;
+
+arguments      = expr { "," expr } ;
+
+primary        = IDENTIFIER
+               | INT_LITERAL
+               | FLOAT_LITERAL
+               | CHAR_LITERAL
+               | STRING_LITERAL
+               | "(" expr ")" ;
+\end{lstlisting}
+
+This grammar is enough to express the required subset while remaining simple
+enough for a handwritten parser.
+
+\section{Parser Design and AST}
+
+The parser is implemented as a recursive-descent parser. This decision was made
+for three reasons:
+
+\begin{enumerate}[leftmargin=2em]
+    \item the language subset is moderate and LL-friendly after factoring
+    expression precedence into separate functions,
+    \item parser logic remains easy to debug and explain during presentation,
+    \item explicit AST construction is useful because the project must expose
+    each stage separately.
+\end{enumerate}
+
+Top-level declarations are parsed by first reading a type and identifier, then
+deciding whether the declaration is a function definition or a global variable.
+Blocks enforce the simplified ``declarations first, then statements'' rule.
+
+The AST stores:
+
+\begin{itemize}[leftmargin=2em]
+    \item top-level declaration list
+    \item separate lists of global variables and functions
+    \item statements such as blocks, declarations, conditionals, loops, returns,
+    and expression statements
+    \item expressions such as literals, identifiers, calls, array indexing,
+    unary operators, binary operators, and assignments
+\end{itemize}
+
+Example AST excerpt for a global array program:
+
+\begin{lstlisting}
+Program
+    GlobalVarDecl name=nums type=int array=3
+    FuncDecl name=main return=int
+        Params <empty>
+        Body
+            BlockStmt
+                ExprStmt
+                    AssignExpr
+                        Target
+                            IndexExpr name=nums
+                                IntLiteral value=0
+\end{lstlisting}
+
+\section{Semantic Analysis}
+
+Semantic analysis is the stage that turns a syntactically valid program into a
+semantically meaningful one. The project checks declarations, visibility,
+assignment compatibility, function-call correctness, return types, and array
+usage.
+
+\subsection*{Symbol Tables and Scope}
+
+The analyzer uses:
+
+\begin{itemize}[leftmargin=2em]
+    \item a global symbol table for global variables,
+    \item a function table for user-defined functions and builtins,
+    \item a stack of local scopes for nested blocks.
+\end{itemize}
+
+Lookup order is:
+
+\begin{enumerate}[leftmargin=2em]
+    \item innermost local scope,
+    \item outer local scopes,
+    \item global scope.
+\end{enumerate}
+
+This correctly supports shadowing. For example, a local variable named
+\texttt{g} hides a global variable \texttt{g} inside the block where the local
+variable is declared.
+
+\subsection*{Checks Implemented}
+
+The analyzer reports errors for:
+
+\begin{itemize}[leftmargin=2em]
+    \item duplicate global declarations
+    \item duplicate local declarations in the same scope
+    \item duplicate function declarations
+    \item global/function name collisions
+    \item undeclared identifiers
+    \item using a non-array as an array
+    \item wrong function argument count
+    \item wrong argument types
+    \item invalid assignment targets
+    \item illegal narrowing such as \texttt{float -> int}
+    \item invalid global or local initializers
+    \item mismatched return values
+\end{itemize}
+
+\subsection*{Type Rules}
+
+Safe widening conversions are allowed:
+
+\begin{itemize}[leftmargin=2em]
+    \item \texttt{char -> int}
+    \item \texttt{char -> float}
+    \item \texttt{int -> float}
+\end{itemize}
+
+Unsafe narrowing conversions are rejected:
+
+\begin{itemize}[leftmargin=2em]
+    \item \texttt{float -> int}
+    \item \texttt{int -> char}
+    \item \texttt{float -> char}
+\end{itemize}
+
+Comparison and logical expressions produce an \texttt{int} result with value
+\texttt{0} or \texttt{1}. Conditions in \texttt{if} and \texttt{while} must be
+numeric scalar expressions.
+
+\subsection*{Builtins}
+
+The following builtin signatures are pre-registered before user-defined
+functions are analyzed:
+
+\begin{lstlisting}[language=C]
+print_int(int)
+print_float(float)
+print_char(char)
+print_str(char[])
+print_newline()
+\end{lstlisting}
+
+\section{Intermediate Representation}
+
+After semantic analysis, the compiler lowers the AST to a custom intermediate
+representation. This IR is already close to the VM instruction set, but still
+expressed in compiler-owned data structures. The IR contains:
+
+\begin{itemize}[leftmargin=2em]
+    \item explicit global declarations
+    \item explicit global initialization instructions
+    \item function-level instructions
+    \item jumps and labels for control flow
+    \item function-call instructions
+    \item local/global load and store instructions
+    \item local/global array indexing instructions
+\end{itemize}
+
+For example, storing into a global array lowers into explicit indexed store
+instructions rather than remaining as a high-level AST node.
+
+\section{Object Code Generation}
+
+The compiler executable \texttt{cforge} lowers IR into a human-readable object
+format with extension \texttt{.vmo}. This object code is intentionally textual
+instead of binary because it is easier to debug, diff, inspect, and present.
+
+The object file format has three sections:
+
+\begin{enumerate}[leftmargin=2em]
+    \item \texttt{globals ... endglobals}
+    \item \texttt{init ... endinit}
+    \item one or more \texttt{func ... end} blocks
+\end{enumerate}
+
+Example excerpt:
+
+\begin{lstlisting}
+globals
+  msg:char[6]
+endglobals
+init
+  INIT_STRING msg "hello"
+endinit
+func main return=int
+  params <empty>
+  PUSH_GLOBAL_REF msg
+  CALL_BUILTIN print_str 1
+  CALL_BUILTIN print_newline 0
+  PUSH_INT 0
+  RET
+end
+\end{lstlisting}
+
+This design gives a clear boundary between compiler and runtime, which also
+helps the final demo because the generated object code can be shown directly.
+
+\section{VM Runtime Design}
+
+The runtime executable \texttt{crun} parses the \texttt{.vmo} object file and
+executes it on a custom virtual machine.
+
+\subsection*{Runtime Memory Model}
+
+The VM uses:
+
+\begin{itemize}[leftmargin=2em]
+    \item a global storage map for global variables and arrays,
+    \item a frame-local storage map for each function activation,
+    \item a typed value stack for expression evaluation.
+\end{itemize}
+
+Each value carries a kind such as \texttt{int}, \texttt{float}, \texttt{char},
+string literal, or array reference. Arrays are stored as fixed-size homogeneous
+cells, and \texttt{print\_str} can accept either a string literal or a reference
+to a \texttt{char[]} object.
+
+\subsection*{Execution Flow}
+
+The runtime performs the following steps:
+
+\begin{enumerate}[leftmargin=2em]
+    \item allocate global storage from the \texttt{globals} section,
+    \item execute the \texttt{init} section once,
+    \item find \texttt{main},
+    \item execute \texttt{main} using local frames and the evaluation stack.
+\end{enumerate}
+
+\subsection*{Builtins in the Runtime}
+
+Builtins are implemented inside the VM rather than being linked externally. This
+keeps the system self-contained and avoids dependence on platform-specific
+calling conventions.
+
+\section{Build and Execution}
+
+The project can be built from the repository root with:
+
+\begin{lstlisting}
+make build
+\end{lstlisting}
+
+The automated tests can be run with:
+
+\begin{lstlisting}
+make test
+\end{lstlisting}
+
+Compilation to object code:
+
+\begin{lstlisting}
+./bin/cforge samples/slice9_run.c -o /tmp/opencode/program.vmo
+\end{lstlisting}
+
+Runtime execution:
+
+\begin{lstlisting}
+./bin/crun /tmp/opencode/program.vmo
+\end{lstlisting}
+
+Phase-wise output can be obtained with:
+
+\begin{lstlisting}
+./bin/cforge --tokens  samples/slice8_run.c
+./bin/cforge --ast     samples/slice8_run.c
+./bin/cforge --sema    samples/slice8_run.c
+./bin/cforge --ir      samples/slice8_run.c
+./bin/cforge --codegen samples/slice8_run.c
+\end{lstlisting}
+
+The Makefile also provides convenience targets such as:
+
+\begin{lstlisting}
+make run FILE=samples/slice9_run.c OBJ=/tmp/opencode/program.vmo
+make phases FILE=samples/slice8_run.c OBJ=/tmp/opencode/program.vmo
+\end{lstlisting}
+
+\section{Sample Programs and Outputs}
+
+To keep the report compact while still representative, four valid programs and
+one invalid program are highlighted below. The repository contains a larger pass
+and fail matrix used during testing.
+
+\subsection*{Program 1: Globals, Shadowing, and Function Use}
+
+File: \texttt{samples/pass/global\_scalar.c}
+
+\begin{lstlisting}[language=C]
+int g = 10;
+
+int add(int x) {
+    return x + g;
+}
+
+int main() {
+    print_int(add(5));
+    print_newline();
+    return 0;
+}
+\end{lstlisting}
+
+This demonstrates:
+
+\begin{itemize}[leftmargin=2em]
+    \item global variable declaration
+    \item user-defined function call
+    \item global lookup inside a function body
+\end{itemize}
+
+Observed output:
+
+\begin{lstlisting}
+15
+\end{lstlisting}
+
+\subsection*{Program 2: Arrays and Strings}
+
+File: \texttt{samples/slice8\_run.c}
+
+\begin{lstlisting}[language=C]
+int main() {
+    char s[6] = "hello";
+    int a[3];
+    a[0] = 4;
+    a[1] = 5;
+    a[2] = a[0] + a[1];
+    print_str(s);
+    print_newline();
+    print_int(a[2]);
+    print_newline();
+    return a[2];
+}
+\end{lstlisting}
+
+This demonstrates:
+
+\begin{itemize}[leftmargin=2em]
+    \item fixed-size arrays
+    \item \texttt{char[]} string initialization
+    \item array indexing and assignment
+    \item builtin string and integer printing
+\end{itemize}
+
+Observed output:
+
+\begin{lstlisting}
+hello
+9
+\end{lstlisting}
+
+\subsection*{Program 3: Float Arithmetic and Function Return}
+
+File: \texttt{samples/slice9\_run.c}
+
+\begin{lstlisting}[language=C]
+float addf(float a, float b) {
+    return a + b;
+}
+
+int main() {
+    float x = 2.5;
+    float y = 4.0;
+    float z = addf(x, y);
+    print_float(z);
+    print_newline();
+    return 0;
+}
+\end{lstlisting}
+
+This demonstrates:
+
+\begin{itemize}[leftmargin=2em]
+    \item float declarations and literals
+    \item float-returning function
+    \item builtin float printing
+\end{itemize}
+
+Observed output:
+
+\begin{lstlisting}
+6.5
+\end{lstlisting}
+
+\subsection*{Program 4: Control Flow}
+
+File: \texttt{samples/slice5\_run.c}
+
+\begin{lstlisting}[language=C]
+int main() {
+    int i = 0;
+    int sum = 0;
+
+    while (i < 5) {
+        if (i == 3) {
+            print_int(99);
+            print_newline();
+        }
+
+        sum = sum + i;
+        i = i + 1;
+    }
+
+    print_int(sum);
+    print_newline();
+    return sum;
+}
+\end{lstlisting}
+
+This demonstrates:
+
+\begin{itemize}[leftmargin=2em]
+    \item \texttt{while} loop
+    \item nested \texttt{if}
+    \item jump-based lowering to the VM
+\end{itemize}
+
+Observed output:
+
+\begin{lstlisting}
+99
+10
+\end{lstlisting}
+
+\subsection*{Program 5: Invalid Narrowing Conversion}
+
+File: \texttt{samples/fail/float\_to\_int.c}
+
+\begin{lstlisting}[language=C]
+int main() {
+    int x = 2.5;
+    return x;
+}
+\end{lstlisting}
+
+Observed compiler diagnostic:
+
+\begin{lstlisting}
+cforge: semantic: initializer type mismatch for x at 2:5: want int
+\end{lstlisting}
+
+This example demonstrates that the compiler rejects implicit narrowing from
+\texttt{float} to \texttt{int}.
+
+\section{Testing Strategy}
+
+Testing was performed at three levels.
+
+\subsection*{Unit Tests}
+
+Go unit tests exist for:
+
+\begin{itemize}[leftmargin=2em]
+    \item tokenization
+    \item parsing of declarations, functions, arrays, and expressions
+    \item semantic analysis of declarations, calls, scopes, and type rules
+    \item VM execution, jumps, function calls, object-format round trips, and
+    global initialization
+\end{itemize}
+
+\subsection*{Sample Matrix}
+
+The project contains separate \texttt{samples/pass} and \texttt{samples/fail}
+directories. Valid samples confirm successful execution, while invalid samples
+confirm that diagnostics are reported. The error handling is currently
+\emph{fail-fast}: one run reports the first encountered semantic or syntax error.
+For this reason, the negative test suite uses multiple distinct invalid sample
+programs rather than a single file containing many unrelated problems.
+
+\subsection*{Phase Verification}
+
+Important samples were checked through:
+
+\begin{enumerate}[leftmargin=2em]
+    \item token dump
+    \item AST dump
+    \item semantic pass
+    \item IR dump
+    \item object-code dump
+    \item full runtime execution
+\end{enumerate}
+
+This phase-by-phase validation helped ensure that bugs were isolated at the
+correct stage rather than being observed only at the final execution step.
+
+\section{Innovation Features}
+
+The project satisfies the core assignment requirements and also includes
+innovation-oriented work beyond the minimum requirements.
+
+\subsection*{Core Requirements Completed}
+
+\begin{itemize}[leftmargin=2em]
+    \item lexical analysis
+    \item syntax analysis
+    \item semantic analysis
+    \item global and local scope management
+    \item intermediate representation
+    \item code generation and executable runtime path
+\end{itemize}
+
+\subsection*{Innovation Features Implemented}
+
+\begin{enumerate}[leftmargin=2em]
+    \item \textbf{Implementation in Go instead of C/C++}. This directly matches
+    the optional innovation category of implementing the project in another
+    language.
+    \item \textbf{Array support}. The compiler supports 1D fixed-size arrays of
+    \texttt{int}, \texttt{char}, and \texttt{float}, including indexing and
+    string initialization for \texttt{char[]}.
+    \item \textbf{Custom target-code path}. Instead of stopping at IR, the
+    compiler emits a standalone object-code format executed by a separate custom
+    runtime. This demonstrates a complete end-to-end design beyond the minimum
+    frontend-only approach.
+\end{enumerate}
+
+These additions strengthen the project in terms of completeness, modularity, and
+demonstration value.
+
+\section{Limitations and Future Work}
+
+The current implementation is complete for the chosen subset, but several
+extensions remain possible.
+
+\begin{itemize}[leftmargin=2em]
+    \item add \texttt{for} loops
+    \item add 2D arrays
+    \item add array parameters
+    \item add an optimizer pass such as constant folding or dead code removal
+    \item add escape-sequence support in char and string literals
+    \item implement true short-circuit semantics for \texttt{\&\&} and \texttt{||}
+    \item add global constant propagation or other global optimizations
+\end{itemize}
+
+These are natural next steps, but were intentionally deferred to keep the core
+compiler stable and demonstrable by the deadline.
+
+\section{Screenshot Placeholders}
+
+The following placeholders can be replaced later with actual terminal
+screenshots from the project directory.
+
+\screenshotplaceholder{Compiler phase outputs for a sample program (tokens, AST, semantic analysis, IR, and object code).}{Run \texttt{make phases FILE=samples/slice8\_run.c OBJ=/tmp/opencode/program.vmo}}
+
+\screenshotplaceholder{Compilation of a source file into a \texttt{.vmo} object file using \texttt{cforge}.}{Run \texttt{./bin/cforge samples/slice9\_run.c -o /tmp/opencode/program.vmo}}
+
+\screenshotplaceholder{Execution of generated object code using \texttt{crun}.}{Run \texttt{./bin/crun /tmp/opencode/program.vmo}}
+
+\screenshotplaceholder{An invalid sample and the resulting compiler diagnostic.}{Run \texttt{./bin/cforge samples/fail/float\_to\_int.c}}
+
+\section{Conclusion}
+
+This project delivers a full compiler pipeline for a carefully chosen C-like
+subset. The final system includes lexical analysis, recursive-descent parsing,
+explicit AST construction, semantic checking with both global and local scope
+management, IR lowering, object-code generation, and runtime execution on a
+custom VM. The use of separate compiler and runtime tools, together with array
+support and a non-C/C++ implementation language, also provides meaningful
+innovation beyond the core requirements. Overall, the implementation satisfies
+the main project goals while remaining modular, demonstrable, and extensible.
+
+\end{document}
