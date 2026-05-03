@@ -7,7 +7,7 @@ RUNTIME_MAIN ?= ./cmd/crun
 RUNTIME_BIN ?= bin/$(RUNTIME_APP)
 
 FILE ?= samples/slice9_run.c
-OBJ ?= /tmp/opencode/program.vmo
+OBJ ?= program.vmo
 
 .PHONY: build build-compiler build-runtime test compile run-object run tokens ast sema ir codegen phases to_file plan runtime-note clean
 
