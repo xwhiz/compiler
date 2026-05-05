@@ -1,0 +1,63 @@
+globals
+  <empty>
+endglobals
+init
+endinit
+func main return=int
+  params <empty>
+  DECLARE_LOCAL MAX_COUNT@0 int
+  PUSH_INT 11
+  STORE_LOCAL MAX_COUNT@0
+  DECLARE_LOCAL i@1 int
+  PUSH_INT 0
+  STORE_LOCAL i@1
+  LOAD_LOCAL i@1
+  LOAD_LOCAL MAX_COUNT@0
+  LT
+  JUMP_IF_ZERO 55 (while_end_1)
+  DECLARE_LOCAL j@2 int
+  PUSH_INT 0
+  STORE_LOCAL j@2
+  LOAD_LOCAL j@2
+  LOAD_LOCAL MAX_COUNT@0
+  LOAD_LOCAL i@1
+  SUB
+  PUSH_INT 2
+  DIV
+  LT
+  JUMP_IF_ZERO 30 (while_end_3)
+  PUSH_CHAR ' '
+  CALL_BUILTIN print_char 1
+  LOAD_LOCAL j@2
+  PUSH_INT 1
+  ADD
+  DUP
+  STORE_LOCAL j@2
+  POP
+  JUMP 13 (while_start_2)
+  PUSH_INT 0
+  DUP
+  STORE_LOCAL j@2
+  POP
+  LOAD_LOCAL j@2
+  LOAD_LOCAL i@1
+  LE
+  JUMP_IF_ZERO 47 (while_end_5)
+  PUSH_CHAR '*'
+  CALL_BUILTIN print_char 1
+  LOAD_LOCAL j@2
+  PUSH_INT 1
+  ADD
+  DUP
+  STORE_LOCAL j@2
+  POP
+  JUMP 34 (while_start_4)
+  CALL_BUILTIN print_newline 0
+  LOAD_LOCAL i@1
+  PUSH_INT 2
+  ADD
+  DUP
+  STORE_LOCAL i@1
+  POP
+  JUMP 6 (while_start_0)
+end

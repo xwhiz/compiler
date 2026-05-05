@@ -1,7 +1,7 @@
 int main()
 {
     // MAKE SURE THIS IS ODD TO PRINT A CORRECT ONE
-    int MAX_COUNT = 7;
+    int MAX_COUNT = 11;
     int i = 0;
     while (i < MAX_COUNT)
     {
