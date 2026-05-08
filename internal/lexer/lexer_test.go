@@ -83,3 +83,33 @@ func TestTokenizeRejectsUnterminatedString(t *testing.T) {
 		t.Fatalf("Tokenize() error = %q, want %q", err.Error(), "1:1: unterminated string literal")
 	}
 }
+
+func TestTokenizeRejectsInvalidNumericTokenStartingIdentifier(t *testing.T) {
+	_, err := Tokenize("int 1res = 10;")
+	if err == nil {
+		t.Fatal("Tokenize() error = nil, want non-nil")
+	}
+	if err.Error() != "1:5: invalid numeric token \"1res\"" {
+		t.Fatalf("Tokenize() error = %q, want %q", err.Error(), "1:5: invalid numeric token \"1res\"")
+	}
+}
+
+func TestTokenizeRejectsInvalidFloatTokenStartingIdentifier(t *testing.T) {
+	_, err := Tokenize("float 2.5value = 1;")
+	if err == nil {
+		t.Fatal("Tokenize() error = nil, want non-nil")
+	}
+	if err.Error() != "1:7: invalid numeric token \"2.5value\"" {
+		t.Fatalf("Tokenize() error = %q, want %q", err.Error(), "1:7: invalid numeric token \"2.5value\"")
+	}
+}
+
+func TestTokenizeAllowsIdentifierWithTrailingDigits(t *testing.T) {
+	tokens, err := Tokenize("int x1 = 10;")
+	if err != nil {
+		t.Fatalf("Tokenize() error = %v", err)
+	}
+	if tokens[1].Type != token.Identifier || tokens[1].Lexeme != "x1" {
+		t.Fatalf("tokens[1] = %#v, want identifier x1", tokens[1])
+	}
+}

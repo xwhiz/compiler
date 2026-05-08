@@ -9,6 +9,7 @@
 \usepackage{enumitem}
 \usepackage{fancyvrb}
 
+
 \hypersetup{
     colorlinks=true,
     linkcolor=black,
@@ -45,19 +46,6 @@
 
 \lstset{style=reportcode}
 
-\newcommand{\imgplaceholder}[2][0.88\linewidth]{%
-    \begin{center}
-        \fbox{\parbox[c][0.26\textheight][c]{#1}{\centering\itshape #2}}
-    \end{center}%
-}
-
-\newcommand{\screenshotplaceholder}[2]{%
-    \begin{figure}[h!]
-        \centering
-        \imgplaceholder{Screenshot placeholder\\[4pt]Replace with image from:\\ #2}
-        \caption{#1}
-    \end{figure}
-}
 
 \begin{document}
 
@@ -93,6 +81,9 @@
     {\large \today\par}
 \end{titlepage}
 
+\tableofcontents
+\newpage
+
 \section{Introduction}
 
 This project implements a compiler for a well-defined subset of the C language.
@@ -101,8 +92,7 @@ analysis, syntax analysis, semantic analysis, intermediate representation,
 object-code generation, and runtime execution. Instead of generating native
 machine code, the compiler emits a custom human-readable VM object format
 (``.vmo''), and a separate runtime executes that object code. This design keeps
-the compilation phases explicit and easy to demonstrate while still satisfying
-the requirement that user programs can be compiled and executed.
+the compilation phases explicit and easy to demonstrate.
 
 The project is organized around two tools:
 
@@ -132,6 +122,29 @@ The main objectives achieved in this project are:
     \item Execute compiled programs through a separate runtime.
     \item Provide clean build, test, compile, and run workflows.
 \end{enumerate}
+
+\section{Changes Asked for During the Presentation}
+
+During the presentation, an additional lexer-level validation was requested for
+malformed numeric tokens that look like identifiers. The lexer was updated to
+reject these cases immediately instead of allowing them to continue into later
+stages.
+
+Here is a program along with its output after the changes.
+
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=0.8\textwidth]{images/lex_error_code.png}
+    \caption{A program with a lexer error where an identifier starts with a number.}
+    \label{fig:my_image}
+\end{figure}
+
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=0.8\textwidth]{images/output.png}
+    \caption{A screenshot of lexer error output displayed in the terminal.}
+    \label{fig:my_image}
+\end{figure}
 
 \section{Implemented Language Subset}
 
@@ -616,13 +629,13 @@ make test
 Compilation to object code:
 
 \begin{lstlisting}
-./bin/cforge samples/slice9_run.c -o /tmp/opencode/program.vmo
+./bin/cforge samples/slice9_run.c -o program.vmo
 \end{lstlisting}
 
 Runtime execution:
 
 \begin{lstlisting}
-./bin/crun /tmp/opencode/program.vmo
+./bin/crun program.vmo
 \end{lstlisting}
 
 Phase-wise output can be obtained with:
@@ -638,8 +651,8 @@ Phase-wise output can be obtained with:
 The Makefile also provides convenience targets such as:
 
 \begin{lstlisting}
-make run FILE=samples/slice9_run.c OBJ=/tmp/opencode/program.vmo
-make phases FILE=samples/slice8_run.c OBJ=/tmp/opencode/program.vmo
+make run FILE=samples/slice9_run.c OBJ=program.vmo
+make phases FILE=samples/slice8_run.c OBJ=program.vmo
 \end{lstlisting}
 
 \section{Sample Programs and Outputs}
@@ -868,9 +881,7 @@ innovation-oriented work beyond the minimum requirements.
 \subsection*{Innovation Features Implemented}
 
 \begin{enumerate}[leftmargin=2em]
-    \item \textbf{Implementation in Go instead of C/C++}. This directly matches
-    the optional innovation category of implementing the project in another
-    language.
+    \item \textbf{Implementation in Go instead of C/C++}
     \item \textbf{Array support}. The compiler supports 1D fixed-size arrays of
     \texttt{int}, \texttt{char}, and \texttt{float}, including indexing and
     string initialization for \texttt{char[]}.
@@ -880,8 +891,7 @@ innovation-oriented work beyond the minimum requirements.
     frontend-only approach.
 \end{enumerate}
 
-These additions strengthen the project in terms of completeness, modularity, and
-demonstration value.
+These additions strengthen the project in terms of completeness, maintenance, and modularity.
 
 \section{Limitations and Future Work}
 
@@ -901,18 +911,15 @@ extensions remain possible.
 These are natural next steps, but were intentionally deferred to keep the core
 compiler stable and demonstrable by the deadline.
 
-\section{Screenshot Placeholders}
+\section{Screenshot}
 
-The following placeholders can be replaced later with actual terminal
-screenshots from the project directory.
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=0.8\textwidth]{images/phases.png}
+    \caption{A program compiled with our compiler showing all of the compilation phases.}
+    \label{fig:my_image}
+\end{figure}
 
-\screenshotplaceholder{Compiler phase outputs for a sample program (tokens, AST, semantic analysis, IR, and object code).}{Run \texttt{make phases FILE=samples/slice8\_run.c OBJ=/tmp/opencode/program.vmo}}
-
-\screenshotplaceholder{Compilation of a source file into a \texttt{.vmo} object file using \texttt{cforge}.}{Run \texttt{./bin/cforge samples/slice9\_run.c -o /tmp/opencode/program.vmo}}
-
-\screenshotplaceholder{Execution of generated object code using \texttt{crun}.}{Run \texttt{./bin/crun /tmp/opencode/program.vmo}}
-
-\screenshotplaceholder{An invalid sample and the resulting compiler diagnostic.}{Run \texttt{./bin/cforge samples/fail/float\_to\_int.c}}
 
 \section{Conclusion}
 

@@ -109,6 +109,7 @@ func (lx *Lexer) scanIdentifier() token.Token {
 func (lx *Lexer) scanNumber() (token.Token, error) {
 	pos := lx.position()
 	start := lx.index
+	isFloat := false
 	for {
 		ch, ok := lx.peek()
 		if !ok || !isDigit(ch) {
@@ -120,6 +121,7 @@ func (lx *Lexer) scanNumber() (token.Token, error) {
 	if ch, ok := lx.peek(); ok && ch == '.' {
 		next, ok := lx.peekNext()
 		if ok && isDigit(next) {
+			isFloat = true
 			lx.advance()
 			for {
 				ch, ok := lx.peek()
@@ -128,10 +130,23 @@ func (lx *Lexer) scanNumber() (token.Token, error) {
 				}
 				lx.advance()
 			}
-			return token.Token{Type: token.FloatLiteral, Lexeme: lx.input[start:lx.index], Pos: pos}, nil
 		}
 	}
 
+	if ch, ok := lx.peek(); ok && isIdentStart(ch) {
+		for {
+			ch, ok := lx.peek()
+			if !ok || !isIdentPart(ch) {
+				break
+			}
+			lx.advance()
+		}
+		return token.Token{}, lx.errorf(pos, "invalid numeric token %q", lx.input[start:lx.index])
+	}
+
+	if isFloat {
+		return token.Token{Type: token.FloatLiteral, Lexeme: lx.input[start:lx.index], Pos: pos}, nil
+	}
 	return token.Token{Type: token.IntLiteral, Lexeme: lx.input[start:lx.index], Pos: pos}, nil
 }
 
